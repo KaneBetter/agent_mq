@@ -1,0 +1,99 @@
+# Full-stack dev compose. `docker compose up` brings up:
+#   db → migrate (one-shot: schema + seed) → server (:4000) + web (:5173)
+# Optional demo worker:  docker compose --profile demo up
+# Source is bind-mounted for hot reload; node_modules come from the image
+# (anonymous volumes) so host/linux native binaries never clash.
+
+x-app-build: &app-build
+  context: .
+  dockerfile: Dockerfile
+
+x-node-volumes: &node-volumes
+  - ./:/app
+  - /app/node_modules
+  - /app/packages/shared/node_modules
+  - /app/packages/server/node_modules
+  - /app/packages/web/node_modules
+  - /app/packages/agent/node_modules
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: agentmq-db
+    environment:
+      POSTGRES_USER: agentmq
+      POSTGRES_PASSWORD: agentmq
+      POSTGRES_DB: agentmq
+    ports:
+      - "5432:5432"
+    volumes:
+      - agentmq-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentmq -d agentmq"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: apply schema + seed demo data, then exit.
+  migrate:
+    build: *app-build
+    command: sh -c "pnpm --filter @agentmq/server migrate && pnpm --filter @agentmq/server seed"
+    environment:
+      DATABASE_URL: postgres://agentmq:agentmq@db:5432/agentmq
+    volumes: *node-volumes
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  server:
+    build: *app-build
+    command: pnpm --filter @agentmq/server dev
+    environment:
+      DATABASE_URL: postgres://agentmq:agentmq@db:5432/agentmq
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "4000"
+      REAPER_INTERVAL_MS: "5000"
+      DEFAULT_VISIBILITY_TIMEOUT: "900"
+      BACKOFF_BASE_SEC: "2"
+      BACKOFF_CAP_SEC: "300"
+      DEFAULT_MAX_RETRIES: "3"
+    ports:
+      - "4000:4000"
+    volumes: *node-volumes
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build: *app-build
+    command: pnpm --filter @agentmq/web dev -- --host 0.0.0.0 --port 5173
+    environment:
+      # Browser runs on the host, so it reaches the API via the published port.
+      VITE_API_BASE: http://localhost:4000
+    ports:
+      - "5173:5173"
+    volumes: *node-volumes
+    depends_on:
+      - server
+
+  # Optional demo worker so the dispatch board moves out of the box.
+  agent:
+    profiles: ["demo"]
+    build: *app-build
+    command: >
+      sh -c "pnpm --filter @agentmq/agent start -- register --name docker-agent --owner demo --caps shell,gpu,cpu &&
+             pnpm --filter @agentmq/agent start -- subscribe --project research &&
+             pnpm --filter @agentmq/agent start -- subscribe --project content &&
+             pnpm --filter @agentmq/agent start -- subscribe --project ops &&
+             pnpm --filter @agentmq/agent start -- run --allow-shell --interval 3"
+    environment:
+      AGENTMQ_SERVER: http://server:4000
+    volumes: *node-volumes
+    depends_on:
+      - server
+
+volumes:
+  agentmq-pgdata:
