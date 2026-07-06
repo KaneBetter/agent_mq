@@ -1,10 +1,12 @@
-// Idempotent demo data: projects + task types + default groups, plus (v5) a
-// demo user + public "Demo Space" that backfilled/legacy topics attach to.
+// Idempotent demo data: projects + task types + default groups, plus a demo
+// user + the single "Public" space that backfilled/legacy topics attach to,
+// and (v6) a private space for the demo user.
 // Safe to run repeatedly (ON CONFLICT DO NOTHING / upsert semantics throughout).
 import type { Recurrence } from "@agentmq/shared";
 import { pool } from "./db.js";
 import { nextRun } from "./scheduling.js";
 import { hashPassword } from "./userAuth.js";
+import { ensurePrivateSpace, ensurePublicSpace } from "./spaces.js";
 
 interface ProjectSeed {
   name: string;
@@ -93,13 +95,16 @@ const ROSTER_RECURRENCE: Recurrence = {
 
 const DEMO_USERNAME = "demo";
 const DEMO_PASSWORD = "demo";
-const DEMO_SPACE_NAME = "Demo Space";
-const DEMO_SPACE_SLUG = "demo-space";
+const PUBLIC_SPACE_NAME = "Public";
 
-/** Seeds the demo user (demo/demo) and a public "Demo Space" owned by them. */
-async function seedDemoUserAndSpace(
+/**
+ * Seeds the demo user (demo/demo), ensures the single Public space (renaming
+ * the legacy "Demo Space" into it if that's the space the unique index found),
+ * and gives demo their own private space via the shared auto-create path.
+ */
+async function seedDemoUserAndSpaces(
   client: import("pg").PoolClient
-): Promise<{ userId: string; spaceId: string }> {
+): Promise<{ userId: string; publicSpaceId: string; privateSpaceId: string }> {
   const existingUser = await client.query<{ id: string }>(
     `SELECT id FROM users WHERE username = $1`,
     [DEMO_USERNAME]
@@ -121,36 +126,38 @@ async function seedDemoUserAndSpace(
     throw new Error("Failed to seed demo user");
   }
 
-  const existingSpace = await client.query<{ id: string }>(
-    `SELECT id FROM spaces WHERE slug = $1`,
-    [DEMO_SPACE_SLUG]
+  // ensurePublicSpace() finds the existing public space if one already exists
+  // (e.g. the old "Demo Space", which was seeded as visibility='public') and
+  // never inserts a second row (spaces_single_public_uidx enforces this).
+  const publicSpaceId = await ensurePublicSpace(client);
+  const publicSpaceRow = await client.query<{ name: string }>(
+    `SELECT name FROM spaces WHERE id = $1`,
+    [publicSpaceId]
   );
-  let spaceId = existingSpace.rows[0]?.id;
-  if (!spaceId) {
-    const spaceResult = await client.query<{ id: string }>(
-      `INSERT INTO spaces (name, slug, visibility, owner_id)
-       VALUES ($1, $2, 'public', $3) RETURNING id`,
-      [DEMO_SPACE_NAME, DEMO_SPACE_SLUG, userId]
+  if (publicSpaceRow.rows[0]?.name !== PUBLIC_SPACE_NAME) {
+    await client.query(`UPDATE spaces SET name = $1 WHERE id = $2`, [
+      PUBLIC_SPACE_NAME,
+      publicSpaceId,
+    ]);
+    console.log(
+      `[seed] renamed public space "${publicSpaceRow.rows[0]?.name}" -> "${PUBLIC_SPACE_NAME}"`
     );
-    spaceId = spaceResult.rows[0]?.id;
-    console.log(`[seed] "${DEMO_SPACE_NAME}" (public) created, owned by "${DEMO_USERNAME}"`);
   } else {
-    console.log(`[seed] "${DEMO_SPACE_NAME}" already exists, skipping`);
-  }
-  if (!spaceId) {
-    throw new Error("Failed to seed demo space");
+    console.log(`[seed] "${PUBLIC_SPACE_NAME}" space already in place, skipping`);
   }
 
   await client.query(
     `INSERT INTO space_members (space_id, user_id, role) VALUES ($1, $2, 'admin')
      ON CONFLICT (space_id, user_id) DO NOTHING`,
-    [spaceId, userId]
+    [publicSpaceId, userId]
   );
 
-  return { userId, spaceId };
+  const privateSpaceId = await ensurePrivateSpace(client, userId, "Demo User");
+
+  return { userId, publicSpaceId, privateSpaceId };
 }
 
-/** Any topic with space_id IS NULL is attached to the demo space (legacy backfill). */
+/** Any topic with space_id IS NULL is attached to the Public space (legacy backfill). */
 async function backfillOrphanTopics(
   client: import("pg").PoolClient,
   spaceId: string
@@ -160,7 +167,7 @@ async function backfillOrphanTopics(
     [spaceId]
   );
   if (result.rows.length > 0) {
-    console.log(`[seed] backfilled ${result.rows.length} orphan topic(s) into "${DEMO_SPACE_NAME}"`);
+    console.log(`[seed] backfilled ${result.rows.length} orphan topic(s) into "${PUBLIC_SPACE_NAME}"`);
   } else {
     console.log(`[seed] no orphan topics to backfill`);
   }
@@ -170,8 +177,8 @@ async function seed(): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const { spaceId } = await seedDemoUserAndSpace(client);
-    await backfillOrphanTopics(client, spaceId);
+    const { publicSpaceId } = await seedDemoUserAndSpaces(client);
+    await backfillOrphanTopics(client, publicSpaceId);
     await client.query("COMMIT");
 
     for (const project of PROJECTS) {
@@ -185,7 +192,7 @@ async function seed(): Promise<void> {
            tags        = CASE WHEN projects.tags = '{}' THEN EXCLUDED.tags ELSE projects.tags END,
            space_id    = COALESCE(projects.space_id, EXCLUDED.space_id)
          RETURNING id`,
-        [project.name, project.description, project.tags, spaceId]
+        [project.name, project.description, project.tags, publicSpaceId]
       );
       const projectId = projectResult.rows[0]?.id;
 

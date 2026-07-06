@@ -1,7 +1,8 @@
 // Space RBAC helpers: resolve a caller's effective role in a space and answer
 // the view/produce/manage questions used across projects/tasks/activity/etc.
+import type { PoolClient } from "pg";
 import type { SpaceRole, SpaceVisibility } from "@agentmq/shared";
-import { query } from "./db.js";
+import { pool, query } from "./db.js";
 import type { AuthedUser } from "./userAuth.js";
 
 export interface SpaceRow {
@@ -84,4 +85,116 @@ export function visibleSpacesClause(
     ) OR sp.owner_id = $${userIdParam})`,
     params: [user.id],
   };
+}
+
+// ── v6: default private/public spaces ──────────────────────────────────────
+const PUBLIC_SPACE_NAME = "Public";
+const PUBLIC_SPACE_SLUG = "public";
+
+function slugify(name: string): string {
+  const base = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return base.length > 0 ? base : "space";
+}
+
+async function uniqueSlug(
+  client: PoolClient | typeof pool,
+  name: string
+): Promise<string> {
+  const base = slugify(name);
+  let candidate = base;
+  let suffix = 1;
+  for (;;) {
+    const existing = await client.query<{ id: string }>(
+      `SELECT id FROM spaces WHERE slug = $1`,
+      [candidate]
+    );
+    if (!existing.rows[0]) return candidate;
+    suffix += 1;
+    candidate = `${base}-${suffix}`;
+  }
+}
+
+/**
+ * Ensures exactly ONE public space exists (name "Public", owner NULL). Safe to
+ * call repeatedly (pre-check + the partial unique index `spaces_single_public_uidx`
+ * guards against a race creating a second one). Returns its id.
+ */
+export async function ensurePublicSpace(
+  client: PoolClient | typeof pool = pool
+): Promise<string> {
+  const existing = await client.query<{ id: string }>(
+    `SELECT id FROM spaces WHERE visibility = 'public' LIMIT 1`
+  );
+  if (existing.rows[0]) {
+    return existing.rows[0].id;
+  }
+
+  try {
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO spaces (name, slug, visibility, owner_id)
+       VALUES ($1, $2, 'public', NULL)
+       RETURNING id`,
+      [PUBLIC_SPACE_NAME, PUBLIC_SPACE_SLUG]
+    );
+    const id = inserted.rows[0]?.id;
+    if (id) return id;
+  } catch (err) {
+    // Another concurrent caller won the race against spaces_single_public_uidx.
+    if (!(err instanceof Error && "code" in err && (err as { code?: string }).code === "23505")) {
+      throw err;
+    }
+  }
+
+  const recheck = await client.query<{ id: string }>(
+    `SELECT id FROM spaces WHERE visibility = 'public' LIMIT 1`
+  );
+  const id = recheck.rows[0]?.id;
+  if (!id) {
+    throw new Error("Failed to ensure public space");
+  }
+  return id;
+}
+
+/**
+ * Ensures the user has exactly one private space, creating
+ * `"<display_name>'s space"` (owner=user, them as admin member) if absent.
+ * Idempotent: if the user already owns a private space, returns its id as-is.
+ */
+export async function ensurePrivateSpace(
+  client: PoolClient | typeof pool,
+  userId: string,
+  displayName: string
+): Promise<string> {
+  const existing = await client.query<{ id: string }>(
+    `SELECT id FROM spaces WHERE owner_id = $1 AND visibility = 'private' LIMIT 1`,
+    [userId]
+  );
+  if (existing.rows[0]) {
+    return existing.rows[0].id;
+  }
+
+  const name = `${displayName}'s space`;
+  const slug = await uniqueSlug(client, name);
+  const inserted = await client.query<{ id: string }>(
+    `INSERT INTO spaces (name, slug, visibility, owner_id)
+     VALUES ($1, $2, 'private', $3)
+     RETURNING id`,
+    [name, slug, userId]
+  );
+  const spaceId = inserted.rows[0]?.id;
+  if (!spaceId) {
+    throw new Error("Failed to create private space");
+  }
+
+  await client.query(
+    `INSERT INTO space_members (space_id, user_id, role) VALUES ($1, $2, 'admin')
+     ON CONFLICT (space_id, user_id) DO NOTHING`,
+    [spaceId, userId]
+  );
+
+  return spaceId;
 }

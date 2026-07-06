@@ -6,6 +6,7 @@ import { startReaper, stopReaper } from "./reaper.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
 import { setActivitySink } from "./events.js";
 import { persistActivity } from "./activity.js";
+import { ensurePublicSpace } from "./spaces.js";
 import { registerAgentRoutes } from "./routes/agents.js";
 import { registerSubscriptionRoutes } from "./routes/subscriptions.js";
 import { registerClaimRoutes } from "./routes/claim.js";
@@ -34,6 +35,9 @@ async function main(): Promise<void> {
   // Wire the activity persistence sink now that the DB pool (imported by
   // activity.ts) is available. Fire-and-forget: never blocks a request.
   setActivitySink(persistActivity);
+
+  // Ensure the single platform-wide "Public" space exists before serving traffic.
+  await ensurePublicSpace();
 
   registerAuthRoutes(app);
   registerSpaceRoutes(app);

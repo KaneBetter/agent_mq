@@ -17,6 +17,7 @@ import type {
 import { pool, query } from "../db.js";
 import { requireAgent } from "../auth.js";
 import { getUser } from "../userAuth.js";
+import { canProduce, fetchSpace } from "../spaces.js";
 import { emitEvent } from "../events.js";
 import { computeAgentResting } from "../rest.js";
 import { mapTaskDetailRow, TASK_DETAIL_SELECT, type TaskDetailRow } from "../rowMappers.js";
@@ -31,6 +32,8 @@ interface AgentRow {
   name: string;
   owner: string;
   owner_user_id: string | null;
+  space_id: string | null;
+  space_name?: string | null;
   machine_info: Record<string, unknown>;
   capabilities: string[];
   max_concurrency: number;
@@ -46,6 +49,8 @@ function mapAgentRow(row: AgentRow): Agent {
     name: row.name,
     owner: row.owner,
     owner_user_id: row.owner_user_id ?? null,
+    space_id: row.space_id ?? null,
+    space_name: row.space_name ?? null,
     machine_info: row.machine_info,
     capabilities: row.capabilities,
     max_concurrency: row.max_concurrency,
@@ -57,7 +62,8 @@ function mapAgentRow(row: AgentRow): Agent {
 }
 
 const AGENT_AGG_SELECT_COLUMNS = `
-    a.id, a.name, a.owner, a.owner_user_id, a.machine_info, a.capabilities, a.max_concurrency,
+    a.id, a.name, a.owner, a.owner_user_id, a.space_id, sp.name AS space_name,
+    a.machine_info, a.capabilities, a.max_concurrency,
     a.status, a.paused, a.last_heartbeat_at, a.created_at,
     COALESCE(inflight.count, 0)::int AS inflight,
     COALESCE(agg.completed_count, 0)::int AS completed_count,
@@ -67,6 +73,7 @@ const AGENT_AGG_SELECT_COLUMNS = `
     COALESCE(agg.total_cost_usd, 0)::float AS total_cost_usd`;
 
 const AGENT_AGG_JOINS = `
+   LEFT JOIN spaces sp ON sp.id = a.space_id
    LEFT JOIN LATERAL (
      SELECT count(*) AS count FROM tasks
      WHERE assigned_agent_id = a.id AND status IN ('CLAIMED','RUNNING')
@@ -105,10 +112,30 @@ async function buildAgentSummary(
 
 export function registerAgentRoutes(app: FastifyInstance): void {
   app.post<{ Body: RegisterAgentRequest }>("/api/agents/register", async (request, reply) => {
+    // v6: registering a consumer now requires an authenticated caller (session
+    // cookie OR ADMIN_TOKEN bearer) and binds the consumer to exactly one space.
+    const caller = await getUser(request);
+    if (!caller) {
+      return reply.code(401).send({ error: "Authentication required" });
+    }
+
     const body = request.body ?? ({} as RegisterAgentRequest);
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (!name) {
       return reply.code(400).send({ error: "name is required" });
+    }
+
+    const spaceId = typeof body.space_id === "string" ? body.space_id.trim() : "";
+    if (!spaceId) {
+      return reply.code(400).send({ error: "space_id is required" });
+    }
+
+    const space = await fetchSpace(spaceId);
+    if (!space) {
+      return reply.code(400).send({ error: "space_id does not refer to an existing space" });
+    }
+    if (!(await canProduce(space, caller))) {
+      return reply.code(403).send({ error: "Not authorized to register a consumer in this space" });
     }
 
     const owner = typeof body.owner === "string" ? body.owner : "";
@@ -127,19 +154,45 @@ export function registerAgentRoutes(app: FastifyInstance): void {
         ? body.group_name.trim()
         : "default";
 
-    // If a user session (or ADMIN_TOKEN) is present, own the new agent.
-    const caller = await getUser(request);
-    const ownerUserId = caller && !caller.isAdmin ? caller.id : null;
+    // ADMIN_TOKEN registers on behalf of no one (owner_user_id stays null);
+    // a real session owns the new consumer.
+    const ownerUserId = caller.isAdmin ? null : caller.id;
 
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
+      // If a project_id was given, it must be a topic that belongs to this space.
+      if (projectId) {
+        const projectResult = await client.query<{ id: string; space_id: string | null }>(
+          `SELECT id, space_id FROM projects WHERE id = $1`,
+          [projectId]
+        );
+        const project = projectResult.rows[0];
+        if (!project) {
+          await client.query("ROLLBACK");
+          return reply.code(400).send({ error: "Project not found" });
+        }
+        if (project.space_id !== spaceId) {
+          await client.query("ROLLBACK");
+          return reply.code(400).send({ error: "project_id is not a topic in this space" });
+        }
+      }
+
       const result = await client.query<AgentRow>(
-        `INSERT INTO agents (name, owner, owner_user_id, machine_info, capabilities, api_token, max_concurrency, status, last_heartbeat_at)
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, 'online', now())
-         RETURNING id, name, owner, owner_user_id, machine_info, capabilities, max_concurrency, status, paused, last_heartbeat_at, created_at`,
-        [name, owner, ownerUserId, JSON.stringify(machineInfo), capabilities, apiToken, maxConcurrency]
+        `INSERT INTO agents (name, owner, owner_user_id, space_id, machine_info, capabilities, api_token, max_concurrency, status, last_heartbeat_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, 'online', now())
+         RETURNING id, name, owner, owner_user_id, space_id, machine_info, capabilities, max_concurrency, status, paused, last_heartbeat_at, created_at`,
+        [
+          name,
+          owner,
+          ownerUserId,
+          spaceId,
+          JSON.stringify(machineInfo),
+          capabilities,
+          apiToken,
+          maxConcurrency,
+        ]
       );
 
       const row = result.rows[0];
@@ -148,22 +201,13 @@ export function registerAgentRoutes(app: FastifyInstance): void {
         return reply.code(500).send({ error: "Failed to register agent" });
       }
 
-      const agent = mapAgentRow(row);
+      const agent = mapAgentRow({ ...row, space_name: space.name });
 
       // Always register the agent's global site-update poll schedule.
       await ensureSiteUpdateSchedule(client, agent.id);
 
       // Optional register-in-project: upsert the group for this project, then subscribe.
       if (projectId) {
-        const projectResult = await client.query<{ id: string }>(
-          `SELECT id FROM projects WHERE id = $1`,
-          [projectId]
-        );
-        if (!projectResult.rows[0]) {
-          await client.query("ROLLBACK");
-          return reply.code(404).send({ error: "Project not found" });
-        }
-
         const groupResult = await client.query<{ id: string }>(
           `INSERT INTO groups (name, project_id) VALUES ($1, $2)
            ON CONFLICT (project_id, name) DO UPDATE SET name = EXCLUDED.name

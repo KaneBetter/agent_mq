@@ -235,7 +235,8 @@ export function registerProjectRoutes(app: FastifyInstance): void {
 
       const agentsResult = await query<Record<string, unknown>>(
         `SELECT DISTINCT
-            a.id, a.name, a.owner, a.owner_user_id, a.machine_info, a.capabilities, a.max_concurrency,
+            a.id, a.name, a.owner, a.owner_user_id, a.space_id, asp.name AS space_name,
+            a.machine_info, a.capabilities, a.max_concurrency,
             a.status, a.paused, a.last_heartbeat_at, a.created_at,
             COALESCE(inflight.count, 0)::int AS inflight,
             COALESCE(agg.completed_count, 0)::int AS completed_count,
@@ -245,6 +246,7 @@ export function registerProjectRoutes(app: FastifyInstance): void {
             COALESCE(agg.total_cost_usd, 0)::float AS total_cost_usd
          FROM agents a
          JOIN subscriptions s ON s.agent_id = a.id AND s.project_id = $1
+         LEFT JOIN spaces asp ON asp.id = a.space_id
          LEFT JOIN LATERAL (
            SELECT count(*) AS count FROM tasks
            WHERE assigned_agent_id = a.id AND status IN ('CLAIMED','RUNNING')
@@ -275,6 +277,8 @@ export function registerProjectRoutes(app: FastifyInstance): void {
           name: r.name as string,
           owner: r.owner as string,
           owner_user_id: (r.owner_user_id as string | null) ?? null,
+          space_id: (r.space_id as string | null) ?? null,
+          space_name: (r.space_name as string | null) ?? null,
           machine_info: r.machine_info as Record<string, unknown>,
           capabilities: r.capabilities as string[],
           max_concurrency: r.max_concurrency as number,

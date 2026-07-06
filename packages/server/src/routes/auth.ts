@@ -1,7 +1,8 @@
 // User auth: register/login/logout/me. Sessions are httpOnly cookies.
 import type { FastifyInstance } from "fastify";
 import type { AuthResponse, LoginRequest, RegisterUserRequest, User } from "@agentmq/shared";
-import { query } from "../db.js";
+import { pool, query } from "../db.js";
+import { ensurePrivateSpace } from "../spaces.js";
 import {
   createSession,
   clearSessionCookie,
@@ -51,9 +52,11 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       return reply.code(400).send({ error: "password must be at least 4 characters" });
     }
 
+    const client = await pool.connect();
     try {
+      await client.query("BEGIN");
       const passwordHash = hashPassword(password);
-      const result = await query<UserRow>(
+      const result = await client.query<UserRow>(
         `INSERT INTO users (username, email, password_hash, display_name)
          VALUES ($1, $2, $3, $4)
          RETURNING id, username, email, password_hash, display_name, created_at`,
@@ -61,20 +64,31 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       );
       const row = result.rows[0];
       if (!row) {
+        await client.query("ROLLBACK");
         return reply.code(500).send({ error: "Failed to create user" });
       }
       const user = mapUserRow(row);
+
+      // Auto-create the user's one private space (idempotent: no-op if they
+      // somehow already own one — can't happen on fresh signup, but safe).
+      await ensurePrivateSpace(client, user.id, user.display_name || user.username);
+
+      await client.query("COMMIT");
+
       const { token, expiresAt } = await createSession(user.id);
       setSessionCookie(reply, token, expiresAt);
 
       const response: AuthResponse = { user };
       return reply.code(201).send(response);
     } catch (err) {
+      await client.query("ROLLBACK").catch(() => undefined);
       if (err instanceof Error && "code" in err && (err as { code?: string }).code === "23505") {
         return reply.code(409).send({ error: "Username already taken" });
       }
       request.log.error(err, "register failed");
       return reply.code(500).send({ error: "Failed to register" });
+    } finally {
+      client.release();
     }
   });
 

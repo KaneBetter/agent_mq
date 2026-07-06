@@ -18,6 +18,10 @@ import { canManage, canView, effectiveRole, fetchSpace, visibleSpacesClause } fr
 const VALID_VISIBILITIES: SpaceVisibility[] = ["private", "team", "public"];
 const VALID_ROLES: SpaceRole[] = ["admin", "member", "viewer"];
 
+/** POST /api/spaces only ever creates TEAM spaces — private is auto-created on
+ * signup and public is the platform singleton; clients cannot request either. */
+const CLIENT_CREATABLE_VISIBILITY: SpaceVisibility = "team";
+
 function mapSpaceRow(row: {
   id: string;
   name: string;
@@ -74,8 +78,9 @@ export function registerSpaceRoutes(app: FastifyInstance): void {
     if (!name) {
       return reply.code(400).send({ error: "name is required" });
     }
-    const visibility: SpaceVisibility =
-      body.visibility && VALID_VISIBILITIES.includes(body.visibility) ? body.visibility : "private";
+    // Force team visibility regardless of what the client requested: private
+    // spaces are auto-created on signup and public is a platform singleton.
+    const visibility: SpaceVisibility = CLIENT_CREATABLE_VISIBILITY;
 
     const client = await pool.connect();
     try {
