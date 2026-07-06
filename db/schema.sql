@@ -135,3 +135,30 @@ CREATE TABLE IF NOT EXISTS metrics (
 CREATE INDEX IF NOT EXISTS metrics_agent_idx ON metrics(agent_id);
 CREATE INDEX IF NOT EXISTS metrics_project_idx ON metrics(project_id);
 CREATE INDEX IF NOT EXISTS metrics_created_idx ON metrics(created_at);
+
+-- ── v3: tags, scheduling, persisted activity (idempotent ALTERs) ───────────
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}';
+ALTER TABLE tasks    ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}';
+-- scheduled_for: when set + future, the task is scheduled and not claimable until then.
+ALTER TABLE tasks    ADD COLUMN IF NOT EXISTS scheduled_for timestamptz;
+
+CREATE INDEX IF NOT EXISTS projects_tags_idx ON projects USING gin(tags);
+CREATE INDEX IF NOT EXISTS tasks_tags_idx    ON tasks USING gin(tags);
+CREATE INDEX IF NOT EXISTS tasks_scheduled_idx
+  ON tasks(scheduled_for) WHERE scheduled_for IS NOT NULL;
+
+-- Durable activity log (the persisted form of the live SSE events).
+CREATE TABLE IF NOT EXISTS activity (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  type       text NOT NULL,
+  project_id uuid REFERENCES projects(id) ON DELETE SET NULL,
+  task_id    uuid REFERENCES tasks(id) ON DELETE SET NULL,
+  agent_id   uuid REFERENCES agents(id) ON DELETE SET NULL,
+  task_type  text,
+  status     text,
+  message    text,
+  meta       jsonb NOT NULL DEFAULT '{}'::jsonb,
+  ts         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS activity_ts_idx      ON activity(ts DESC);
+CREATE INDEX IF NOT EXISTS activity_project_idx ON activity(project_id, ts DESC);
