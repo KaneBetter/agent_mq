@@ -30,6 +30,9 @@ export interface TaskRow {
   visible_after: string | null;
   scheduled_for: string | null;
   schedule_id: string | null;
+  state: Record<string, unknown> | null;
+  assign_to_agent_id: string | null;
+  progress: number | null;
   dedup_key: string | null;
   last_error: string | null;
   created_at: string;
@@ -56,6 +59,9 @@ export function mapTaskRow(row: TaskRow): Task {
     visible_after: row.visible_after,
     scheduled_for: row.scheduled_for,
     schedule_id: row.schedule_id,
+    state: row.state ?? null,
+    assign_to_agent_id: row.assign_to_agent_id ?? null,
+    progress: row.progress ?? null,
     dedup_key: row.dedup_key,
     last_error: row.last_error,
     created_at: row.created_at,

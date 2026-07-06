@@ -57,6 +57,7 @@ export function handleSseRequest(request: FastifyRequest, reply: FastifyReply): 
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
     "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Credentials": "true",
     Vary: "Origin",
   });
   // Flush headers immediately (fires onopen) and hint the client reconnect delay.

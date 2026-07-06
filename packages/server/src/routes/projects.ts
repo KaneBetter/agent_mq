@@ -22,12 +22,17 @@ import {
   type TaskDetailRow,
 } from "../rowMappers.js";
 import { nextRun } from "../scheduling.js";
+import { requireUser } from "../userAuth.js";
+import { canProduce, canView, fetchSpace, visibleSpacesClause } from "../spaces.js";
+import { computeAgentResting } from "../rest.js";
 
 interface ProjectRow {
   id: string;
   name: string;
   description: string;
   tags: string[] | null;
+  space_id: string | null;
+  space_name?: string | null;
   task_schema: Record<string, unknown> | null;
   created_at: string;
 }
@@ -38,6 +43,8 @@ function mapProjectRow(row: ProjectRow): Project {
     name: row.name,
     description: row.description,
     tags: row.tags ?? [],
+    space_id: row.space_id ?? null,
+    space_name: row.space_name ?? null,
     task_schema: row.task_schema,
     created_at: row.created_at,
   };
@@ -91,12 +98,24 @@ async function buildProjectSummary(row: ProjectRow): Promise<ProjectSummary> {
   };
 }
 
+/** CreateProjectRequest + the v5 required space_id (shared type is frozen). */
+type CreateProjectRequestWithSpace = CreateProjectRequest & { space_id?: string };
+
+const PROJECT_SELECT_COLUMNS = `p.id, p.name, p.description, p.task_schema, p.tags, p.space_id, sp.name AS space_name, p.created_at`;
+
 export function registerProjectRoutes(app: FastifyInstance): void {
-  app.post<{ Body: CreateProjectRequest }>("/api/projects", async (request, reply) => {
-    const body = request.body ?? ({} as CreateProjectRequest);
+  app.post<{ Body: CreateProjectRequestWithSpace }>("/api/projects", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+
+    const body = request.body ?? ({} as CreateProjectRequestWithSpace);
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (!name) {
       return reply.code(400).send({ error: "name is required" });
+    }
+    const spaceId = typeof body.space_id === "string" ? body.space_id : "";
+    if (!spaceId) {
+      return reply.code(400).send({ error: "space_id is required" });
     }
     const description = typeof body.description === "string" ? body.description : "";
     const taskSchema = body.task_schema ?? null;
@@ -106,15 +125,23 @@ export function registerProjectRoutes(app: FastifyInstance): void {
         ? body.default_group.trim()
         : "default";
 
+    const space = await fetchSpace(spaceId);
+    if (!space) {
+      return reply.code(404).send({ error: "Space not found" });
+    }
+    if (!(await canProduce(space, user))) {
+      return reply.code(403).send({ error: "Not authorized to create topics in this space" });
+    }
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
       const projectResult = await client.query<ProjectRow>(
-        `INSERT INTO projects (name, description, task_schema, tags)
-         VALUES ($1, $2, $3::jsonb, $4)
-         RETURNING id, name, description, task_schema, tags, created_at`,
-        [name, description, taskSchema ? JSON.stringify(taskSchema) : null, tags]
+        `INSERT INTO projects (name, description, task_schema, tags, space_id)
+         VALUES ($1, $2, $3::jsonb, $4, $5)
+         RETURNING id, name, description, task_schema, tags, space_id, created_at`,
+        [name, description, taskSchema ? JSON.stringify(taskSchema) : null, tags, spaceId]
       );
 
       const row = projectResult.rows[0];
@@ -130,7 +157,7 @@ export function registerProjectRoutes(app: FastifyInstance): void {
       );
 
       await client.query("COMMIT");
-      return reply.code(201).send(mapProjectRow(row));
+      return reply.code(201).send(mapProjectRow({ ...row, space_name: space.name }));
     } catch (err) {
       await client.query("ROLLBACK");
       if (err instanceof Error && "code" in err && (err as { code?: string }).code === "23505") {
@@ -144,14 +171,27 @@ export function registerProjectRoutes(app: FastifyInstance): void {
   });
 
   app.get<{ Querystring: { tag?: string } }>("/api/projects", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+
     const { tag } = request.query;
     try {
+      const { clause, params: visibilityParams } = visibleSpacesClause(user, 0);
+      const params: unknown[] = [...visibilityParams];
+      const conditions: string[] = [clause];
+
+      if (tag) {
+        params.push(tag);
+        conditions.push(`$${params.length} = ANY(p.tags)`);
+      }
+
       const projectsResult = await query<ProjectRow>(
-        tag
-          ? `SELECT id, name, description, task_schema, tags, created_at FROM projects
-             WHERE $1 = ANY(tags) ORDER BY created_at ASC`
-          : `SELECT id, name, description, task_schema, tags, created_at FROM projects ORDER BY created_at ASC`,
-        tag ? [tag] : []
+        `SELECT ${PROJECT_SELECT_COLUMNS}
+         FROM projects p
+         LEFT JOIN spaces sp ON sp.id = p.space_id
+         WHERE ${conditions.join(" AND ")}
+         ORDER BY p.created_at ASC`,
+        params
       );
 
       const summaries: ProjectSummary[] = [];
@@ -167,10 +207,13 @@ export function registerProjectRoutes(app: FastifyInstance): void {
   });
 
   app.get<{ Params: { id: string } }>("/api/projects/:id", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+
     const { id } = request.params;
     try {
       const projectResult = await query<ProjectRow>(
-        `SELECT id, name, description, task_schema, tags, created_at FROM projects WHERE id = $1`,
+        `SELECT ${PROJECT_SELECT_COLUMNS} FROM projects p LEFT JOIN spaces sp ON sp.id = p.space_id WHERE p.id = $1`,
         [id]
       );
       const row = projectResult.rows[0];
@@ -178,12 +221,22 @@ export function registerProjectRoutes(app: FastifyInstance): void {
         return reply.code(404).send({ error: "Project not found" });
       }
 
+      if (row.space_id) {
+        const space = await fetchSpace(row.space_id);
+        if (space && !(await canView(space, user))) {
+          return reply.code(403).send({ error: "Not authorized to view this project" });
+        }
+      } else if (!user.isAdmin) {
+        // Orphaned (no space) topics are only visible to the admin bypass.
+        return reply.code(403).send({ error: "Not authorized to view this project" });
+      }
+
       const summary = await buildProjectSummary(row);
 
       const agentsResult = await query<Record<string, unknown>>(
         `SELECT DISTINCT
-            a.id, a.name, a.owner, a.machine_info, a.capabilities, a.max_concurrency,
-            a.status, a.last_heartbeat_at, a.created_at,
+            a.id, a.name, a.owner, a.owner_user_id, a.machine_info, a.capabilities, a.max_concurrency,
+            a.status, a.paused, a.last_heartbeat_at, a.created_at,
             COALESCE(inflight.count, 0)::int AS inflight,
             COALESCE(agg.completed_count, 0)::int AS completed_count,
             COALESCE(agg.failed_count, 0)::int AS failed_count,
@@ -210,18 +263,23 @@ export function registerProjectRoutes(app: FastifyInstance): void {
          ORDER BY a.created_at DESC`,
         [id]
       );
-      const agents: AgentSummary[] = agentsResult.rows.map((r) => {
+      const agents: AgentSummary[] = [];
+      for (const r of agentsResult.rows) {
         const completed = Number(r.completed_count ?? 0);
         const failed = Number(r.failed_count ?? 0);
         const finished = completed + failed;
-        return {
+        const paused = Boolean(r.paused);
+        const resting = await computeAgentResting(r.id as string, paused);
+        agents.push({
           id: r.id as string,
           name: r.name as string,
           owner: r.owner as string,
+          owner_user_id: (r.owner_user_id as string | null) ?? null,
           machine_info: r.machine_info as Record<string, unknown>,
           capabilities: r.capabilities as string[],
           max_concurrency: r.max_concurrency as number,
           status: r.status as AgentSummary["status"],
+          paused,
           last_heartbeat_at: r.last_heartbeat_at as string | null,
           created_at: r.created_at as string,
           inflight: Number(r.inflight ?? 0),
@@ -231,8 +289,9 @@ export function registerProjectRoutes(app: FastifyInstance): void {
           total_wall_time_ms: Number(r.total_wall_time_ms ?? 0),
           total_cost_usd: Number(r.total_cost_usd ?? 0),
           success_rate: finished > 0 ? completed / finished : null,
-        };
-      });
+          resting,
+        });
+      }
 
       const schedulesResult = await query<ScheduleRow>(
         `SELECT * FROM schedules WHERE project_id = $1 ORDER BY created_at ASC`,

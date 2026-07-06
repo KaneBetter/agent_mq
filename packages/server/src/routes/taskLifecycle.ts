@@ -1,6 +1,8 @@
-// Agent-facing task lifecycle: renew lease (heartbeat) and report completion.
+// Agent-facing task lifecycle: renew lease (heartbeat), report completion,
+// and (v5) checkpoint progress so a stopped/reassigned task can resume.
 import type { FastifyInstance } from "fastify";
 import type {
+  CheckpointRequest,
   CompleteTaskRequest,
   CompleteTaskResponse,
   TaskHeartbeatResponse,
@@ -261,6 +263,60 @@ export function registerTaskLifecycleRoutes(app: FastifyInstance): void {
         await client.query("ROLLBACK");
         request.log.error(err, "task complete failed");
         return reply.code(500).send({ error: "Failed to complete task" });
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  // ── v5: checkpoint — agent bearer; must hold the lease ──────────────────
+  app.post<{ Params: { id: string }; Body: CheckpointRequest }>(
+    "/api/tasks/:id/checkpoint",
+    async (request, reply) => {
+      const agent = await requireAgent(request, reply);
+      if (!agent) return;
+
+      const { id } = request.params;
+      const body = request.body ?? ({} as CheckpointRequest);
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const row = await fetchLeaseRow(client, id);
+
+        if (!row) {
+          await client.query("ROLLBACK");
+          return reply.code(404).send({ error: "Task not found" });
+        }
+        if (!leaseIsValid(row, agent.id)) {
+          await client.query("ROLLBACK");
+          return reply.code(409).send({ error: "Lease lost or expired" });
+        }
+
+        const hasState = body.state !== undefined && body.state !== null;
+        const hasProgress = typeof body.progress === "number";
+
+        const result = await client.query<{ state: Record<string, unknown> | null; progress: number | null }>(
+          `UPDATE tasks SET
+              state    = COALESCE($2::jsonb, state),
+              progress = COALESCE($3, progress)
+           WHERE id = $1
+           RETURNING state, progress`,
+          [id, hasState ? JSON.stringify(body.state) : null, hasProgress ? body.progress : null]
+        );
+
+        await client.query("COMMIT");
+
+        const updated = result.rows[0];
+        return reply.send({
+          ok: true,
+          state: updated?.state ?? null,
+          progress: updated?.progress ?? null,
+        });
+      } catch (err) {
+        await client.query("ROLLBACK");
+        request.log.error(err, "task checkpoint failed");
+        return reply.code(500).send({ error: "Failed to save checkpoint" });
       } finally {
         client.release();
       }

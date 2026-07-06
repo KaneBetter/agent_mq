@@ -25,6 +25,8 @@ export interface Env {
   DEFAULT_MAX_RETRIES: number;
   /** Heartbeat staleness threshold (ms) before an agent is flipped offline. */
   AGENT_STALE_MS: number;
+  /** Superuser bearer token bypass for scripts/demo/feeder (v5 auth). */
+  ADMIN_TOKEN: string;
 }
 
 export const env: Env = {
@@ -40,4 +42,5 @@ export const env: Env = {
   BACKOFF_CAP_SEC: num("BACKOFF_CAP_SEC", 300),
   DEFAULT_MAX_RETRIES: num("DEFAULT_MAX_RETRIES", 3),
   AGENT_STALE_MS: num("AGENT_STALE_MS", 30_000),
+  ADMIN_TOKEN: str("ADMIN_TOKEN", "dev-admin"),
 };

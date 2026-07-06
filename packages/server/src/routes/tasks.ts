@@ -1,6 +1,13 @@
-// Management/UI-facing task routes: publish, list, get, requeue, cancel.
+// Management/UI-facing task routes: publish, list, get, requeue, cancel,
+// and (v5) stop/reassign (user auth) — scoped to spaces the caller can see.
 import type { FastifyInstance } from "fastify";
-import type { PublishTaskRequest, Task, TaskStatus } from "@agentmq/shared";
+import type {
+  PublishTaskRequest,
+  ReassignTaskRequest,
+  StopTaskRequest,
+  Task,
+  TaskStatus,
+} from "@agentmq/shared";
 import { TASK_STATUSES } from "@agentmq/shared";
 import { pool, query } from "../db.js";
 import { env } from "../env.js";
@@ -12,6 +19,8 @@ import {
   type TaskDetailRow,
   type TaskRow,
 } from "../rowMappers.js";
+import { requireUser } from "../userAuth.js";
+import { canProduce, canView, fetchSpace, visibleSpacesClause } from "../spaces.js";
 
 interface TaskTypeRow {
   required_capabilities: string[];
@@ -19,6 +28,9 @@ interface TaskTypeRow {
 
 export function registerTaskRoutes(app: FastifyInstance): void {
   app.post<{ Body: PublishTaskRequest }>("/api/tasks", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+
     const body = request.body ?? ({} as PublishTaskRequest);
     const projectId = typeof body.project_id === "string" ? body.project_id : "";
     const type = typeof body.type === "string" ? body.type.trim() : "";
@@ -31,8 +43,8 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     try {
       await client.query("BEGIN");
 
-      const projectResult = await client.query<{ id: string; name: string }>(
-        `SELECT id, name FROM projects WHERE id = $1`,
+      const projectResult = await client.query<{ id: string; name: string; space_id: string | null }>(
+        `SELECT id, name, space_id FROM projects WHERE id = $1`,
         [projectId]
       );
       if (!projectResult.rows[0]) {
@@ -40,6 +52,18 @@ export function registerTaskRoutes(app: FastifyInstance): void {
         return reply.code(404).send({ error: "Project not found" });
       }
       const projectName = projectResult.rows[0].name;
+      const projectSpaceId = projectResult.rows[0].space_id;
+
+      if (projectSpaceId) {
+        const space = await fetchSpace(projectSpaceId);
+        if (!space || !(await canProduce(space, user))) {
+          await client.query("ROLLBACK");
+          return reply.code(403).send({ error: "Not authorized to produce in this topic's space" });
+        }
+      } else if (!user.isAdmin) {
+        await client.query("ROLLBACK");
+        return reply.code(403).send({ error: "Not authorized to produce in this topic's space" });
+      }
 
       // Dedup: return the existing task if dedup_key already exists.
       if (body.dedup_key) {
@@ -144,6 +168,9 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       limit?: string;
     };
   }>("/api/tasks", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+
     const { status, project_id: projectId, type, tag } = request.query;
     const limit = Math.min(Math.max(Number(request.query.limit) || 100, 1), 1000);
 
@@ -151,8 +178,13 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       return reply.code(400).send({ error: `Invalid status: ${status}` });
     }
 
-    const conditions: string[] = [];
-    const params: unknown[] = [];
+    // Space visibility: join to the topic's space and require it be
+    // public/member-visible (the visibleSpacesClause helper uses alias `sp`).
+    const { clause: spaceClause, params: spaceParams } = visibleSpacesClause(user, 0);
+    const conditions: string[] = [
+      `(t.project_id IN (SELECT p.id FROM projects p LEFT JOIN spaces sp ON sp.id = p.space_id WHERE ${spaceClause}))`,
+    ];
+    const params: unknown[] = [...spaceParams];
 
     if (status) {
       params.push(status);
@@ -171,7 +203,7 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       conditions.push(`$${params.length} = ANY(t.tags)`);
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
     params.push(limit);
 
     try {
@@ -187,6 +219,9 @@ export function registerTaskRoutes(app: FastifyInstance): void {
   });
 
   app.get<{ Params: { id: string } }>("/api/tasks/:id", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+
     try {
       const result = await query<TaskDetailRow>(
         `${TASK_DETAIL_SELECT} WHERE t.id = $1`,
@@ -196,6 +231,22 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       if (!row) {
         return reply.code(404).send({ error: "Task not found" });
       }
+
+      if (!user.isAdmin) {
+        const projectResult = await query<{ space_id: string | null }>(
+          `SELECT space_id FROM projects WHERE id = $1`,
+          [row.project_id]
+        );
+        const spaceId = projectResult.rows[0]?.space_id ?? null;
+        if (!spaceId) {
+          return reply.code(403).send({ error: "Not authorized to view this task" });
+        }
+        const space = await fetchSpace(spaceId);
+        if (!space || !(await canView(space, user))) {
+          return reply.code(403).send({ error: "Not authorized to view this task" });
+        }
+      }
+
       return reply.send(mapTaskDetailRow(row));
     } catch (err) {
       request.log.error(err, "get task failed");
@@ -289,4 +340,116 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       return reply.code(500).send({ error: "Failed to cancel task" });
     }
   });
+
+  // ── v5: stop — user auth. Release the lease back to PENDING, KEEP `state`.
+  app.post<{ Params: { id: string }; Body: StopTaskRequest }>(
+    "/api/tasks/:id/stop",
+    async (request, reply) => {
+      const user = await requireUser(request, reply);
+      if (!user) return;
+
+      const body = request.body ?? ({} as StopTaskRequest);
+      const assignToAgentId =
+        typeof body.assign_to_agent_id === "string" ? body.assign_to_agent_id : null;
+
+      try {
+        const result = await query<TaskRow>(
+          `UPDATE tasks SET
+              status             = 'PENDING',
+              assigned_agent_id  = NULL,
+              group_id           = NULL,
+              claimed_at         = NULL,
+              lease_expires_at   = NULL,
+              visible_after      = NULL,
+              assign_to_agent_id = COALESCE($2, assign_to_agent_id)
+           WHERE id = $1 AND status IN ('CLAIMED','RUNNING')
+           RETURNING *`,
+          [request.params.id, assignToAgentId]
+        );
+
+        const row = result.rows[0];
+        if (!row) {
+          const exists = await query<{ id: string }>(`SELECT id FROM tasks WHERE id = $1`, [
+            request.params.id,
+          ]);
+          if (!exists.rows[0]) {
+            return reply.code(404).send({ error: "Task not found" });
+          }
+          return reply.code(409).send({ error: "Task is not in-flight" });
+        }
+
+        const task = mapTaskRow(row);
+        emitEvent({
+          type: "task.requeued",
+          task_id: task.id,
+          task_type: task.type,
+          project_id: task.project_id,
+          status: task.status,
+          message: "Stopped by operator; checkpoint preserved",
+        });
+        return reply.send(task);
+      } catch (err) {
+        request.log.error(err, "stop task failed");
+        return reply.code(500).send({ error: "Failed to stop task" });
+      }
+    }
+  );
+
+  // ── v5: reassign — user auth. Target a specific consumer; release any lease.
+  app.post<{ Params: { id: string }; Body: ReassignTaskRequest }>(
+    "/api/tasks/:id/reassign",
+    async (request, reply) => {
+      const user = await requireUser(request, reply);
+      if (!user) return;
+
+      const body = request.body ?? ({} as ReassignTaskRequest);
+      const agentId = typeof body.agent_id === "string" ? body.agent_id : "";
+      if (!agentId) {
+        return reply.code(400).send({ error: "agent_id is required" });
+      }
+
+      try {
+        const agentExists = await query<{ id: string }>(`SELECT id FROM agents WHERE id = $1`, [
+          agentId,
+        ]);
+        if (!agentExists.rows[0]) {
+          return reply.code(404).send({ error: "Agent not found" });
+        }
+
+        const result = await query<TaskRow>(
+          `UPDATE tasks SET
+              assign_to_agent_id = $2,
+              status              = CASE WHEN status IN ('CLAIMED','RUNNING') THEN 'PENDING' ELSE status END,
+              assigned_agent_id   = CASE WHEN status IN ('CLAIMED','RUNNING') THEN NULL ELSE assigned_agent_id END,
+              group_id            = CASE WHEN status IN ('CLAIMED','RUNNING') THEN NULL ELSE group_id END,
+              claimed_at          = CASE WHEN status IN ('CLAIMED','RUNNING') THEN NULL ELSE claimed_at END,
+              lease_expires_at    = CASE WHEN status IN ('CLAIMED','RUNNING') THEN NULL ELSE lease_expires_at END,
+              visible_after       = CASE WHEN status IN ('CLAIMED','RUNNING') THEN NULL ELSE visible_after END
+           WHERE id = $1
+           RETURNING *`,
+          [request.params.id, agentId]
+        );
+
+        const row = result.rows[0];
+        if (!row) {
+          return reply.code(404).send({ error: "Task not found" });
+        }
+
+        const task = mapTaskRow(row);
+        emitEvent({
+          type: "task.requeued",
+          task_id: task.id,
+          task_type: task.type,
+          project_id: task.project_id,
+          agent_id: agentId,
+          status: task.status,
+          message: `Reassigned to agent ${agentId}`,
+        });
+        return reply.send(task);
+      } catch (err) {
+        request.log.error(err, "reassign task failed");
+        return reply.code(500).send({ error: "Failed to reassign task" });
+      }
+    }
+  );
 }

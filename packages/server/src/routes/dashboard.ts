@@ -1,10 +1,27 @@
 import type { FastifyInstance } from "fastify";
 import type { CostBreakdown, CostBucket, OverviewKPIs } from "@agentmq/shared";
 import { query } from "../db.js";
+import { requireUser } from "../userAuth.js";
+import { visibleSpacesClause } from "../spaces.js";
+import type { AuthedUser } from "../userAuth.js";
+
+/** SQL subquery: project ids in spaces the caller can view. */
+function visibleProjectsSubquery(user: AuthedUser): { sql: string; params: unknown[] } {
+  const { clause, params } = visibleSpacesClause(user, 0);
+  return {
+    sql: `(SELECT p.id FROM projects p LEFT JOIN spaces sp ON sp.id = p.space_id WHERE ${clause})`,
+    params,
+  };
+}
 
 export function registerDashboardRoutes(app: FastifyInstance): void {
   app.get("/api/dashboard/overview", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+
     try {
+      const { sql: projectsSql, params: projectsParams } = visibleProjectsSubquery(user);
+
       const agentsResult = await query<{ agents_online: string; agents_total: string }>(
         `SELECT
             count(*) FILTER (WHERE status = 'online') AS agents_online,
@@ -23,12 +40,14 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
             count(*) FILTER (WHERE status IN ('CLAIMED','RUNNING')) AS tasks_running,
             count(*) FILTER (WHERE status = 'COMPLETED') AS tasks_completed,
             count(*) FILTER (WHERE status = 'DEAD') AS tasks_dead
-         FROM tasks`
+         FROM tasks WHERE project_id IN ${projectsSql}`,
+        projectsParams
       );
 
       const metricsResult = await query<{ total_tokens: string; total_cost_usd: number }>(
         `SELECT COALESCE(sum(total_tokens), 0) AS total_tokens, COALESCE(sum(cost_usd), 0) AS total_cost_usd
-         FROM metrics`
+         FROM metrics WHERE project_id IN ${projectsSql}`,
+        projectsParams
       );
 
       const agents = agentsResult.rows[0];
@@ -54,12 +73,19 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
   });
 
   app.get("/api/dashboard/costs", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+
     try {
+      const { sql: projectsSql, params: projectsParams } = visibleProjectsSubquery(user);
+
       const byModel = await bucketQuery(
         `SELECT COALESCE(model, 'unknown') AS key,
                 sum(input_tokens) AS input_tokens, sum(output_tokens) AS output_tokens,
                 sum(total_tokens) AS total_tokens, sum(cost_usd) AS cost_usd, count(*) AS tasks
-         FROM metrics GROUP BY COALESCE(model, 'unknown') ORDER BY cost_usd DESC`
+         FROM metrics WHERE project_id IN ${projectsSql}
+         GROUP BY COALESCE(model, 'unknown') ORDER BY cost_usd DESC`,
+        projectsParams
       );
 
       const byAgent = await bucketQuery(
@@ -67,7 +93,9 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
                 sum(m.input_tokens) AS input_tokens, sum(m.output_tokens) AS output_tokens,
                 sum(m.total_tokens) AS total_tokens, sum(m.cost_usd) AS cost_usd, count(*) AS tasks
          FROM metrics m LEFT JOIN agents a ON a.id = m.agent_id
-         GROUP BY COALESCE(a.name, 'unknown') ORDER BY cost_usd DESC`
+         WHERE m.project_id IN ${projectsSql}
+         GROUP BY COALESCE(a.name, 'unknown') ORDER BY cost_usd DESC`,
+        projectsParams
       );
 
       const byProject = await bucketQuery(
@@ -75,14 +103,18 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
                 sum(m.input_tokens) AS input_tokens, sum(m.output_tokens) AS output_tokens,
                 sum(m.total_tokens) AS total_tokens, sum(m.cost_usd) AS cost_usd, count(*) AS tasks
          FROM metrics m LEFT JOIN projects p ON p.id = m.project_id
-         GROUP BY COALESCE(p.name, 'unknown') ORDER BY cost_usd DESC`
+         WHERE m.project_id IN ${projectsSql}
+         GROUP BY COALESCE(p.name, 'unknown') ORDER BY cost_usd DESC`,
+        projectsParams
       );
 
       const byDay = await bucketQuery(
         `SELECT to_char(created_at, 'YYYY-MM-DD') AS key,
                 sum(input_tokens) AS input_tokens, sum(output_tokens) AS output_tokens,
                 sum(total_tokens) AS total_tokens, sum(cost_usd) AS cost_usd, count(*) AS tasks
-         FROM metrics GROUP BY to_char(created_at, 'YYYY-MM-DD') ORDER BY key DESC`
+         FROM metrics WHERE project_id IN ${projectsSql}
+         GROUP BY to_char(created_at, 'YYYY-MM-DD') ORDER BY key DESC`,
+        projectsParams
       );
 
       const anomalies = detectAnomalies(byAgent, "agent").concat(detectAnomalies(byDay, "day"));
@@ -112,8 +144,8 @@ interface BucketRow {
   tasks: string;
 }
 
-async function bucketQuery(sql: string): Promise<CostBucket[]> {
-  const result = await query<BucketRow>(sql);
+async function bucketQuery(sql: string, params: unknown[] = []): Promise<CostBucket[]> {
+  const result = await query<BucketRow>(sql, params);
   return result.rows.map((row) => ({
     key: row.key,
     input_tokens: Number(row.input_tokens ?? 0),

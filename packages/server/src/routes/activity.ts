@@ -2,6 +2,8 @@
 import type { FastifyInstance } from "fastify";
 import type { ActivityRecord, EventType, TaskStatus } from "@agentmq/shared";
 import { query } from "../db.js";
+import { requireUser } from "../userAuth.js";
+import { visibleSpacesClause } from "../spaces.js";
 
 interface ActivityRow {
   id: string;
@@ -44,11 +46,24 @@ export function registerActivityRoutes(app: FastifyInstance): void {
   app.get<{
     Querystring: { project_id?: string; type?: string; limit?: string };
   }>("/api/activity", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+
     const { project_id: projectId, type } = request.query;
     const limit = Math.min(Math.max(Number(request.query.limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
 
-    const conditions: string[] = [];
-    const params: unknown[] = [];
+    // Space visibility: only activity rows whose project (when set) lives in
+    // a space the caller can see. Rows with no project_id (rare) pass through
+    // for the admin bypass only.
+    const { clause: spaceClause, params: spaceParams } = visibleSpacesClause(user, 0);
+    const conditions: string[] = [
+      user.isAdmin
+        ? "TRUE"
+        : `(a.project_id IS NOT NULL AND a.project_id IN (
+             SELECT p.id FROM projects p LEFT JOIN spaces sp ON sp.id = p.space_id WHERE ${spaceClause}
+           ))`,
+    ];
+    const params: unknown[] = [...spaceParams];
 
     if (projectId) {
       params.push(projectId);
@@ -59,7 +74,7 @@ export function registerActivityRoutes(app: FastifyInstance): void {
       conditions.push(`a.type = $${params.length}`);
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
     params.push(limit);
 
     try {

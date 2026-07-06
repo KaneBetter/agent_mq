@@ -22,16 +22,22 @@ import { registerHealthRoutes } from "./routes/health.js";
 import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerAgentScheduleRoutes } from "./routes/agentSchedules.js";
 import { registerOnboardingRoutes } from "./routes/onboarding.js";
+import { registerAuthRoutes } from "./routes/auth.js";
+import { registerSpaceRoutes } from "./routes/spaces.js";
+import { registerMeRoutes } from "./routes/me.js";
 
 async function main(): Promise<void> {
   const app = Fastify({ logger: true });
 
-  await app.register(cors, { origin: true });
+  await app.register(cors, { origin: true, credentials: true });
 
   // Wire the activity persistence sink now that the DB pool (imported by
   // activity.ts) is available. Fire-and-forget: never blocks a request.
   setActivitySink(persistActivity);
 
+  registerAuthRoutes(app);
+  registerSpaceRoutes(app);
+  registerMeRoutes(app);
   registerAgentRoutes(app);
   registerSubscriptionRoutes(app);
   registerClaimRoutes(app);

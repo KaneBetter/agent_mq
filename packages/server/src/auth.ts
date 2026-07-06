@@ -13,6 +13,7 @@ export interface AuthedAgent {
   capabilities: string[];
   max_concurrency: number;
   status: Agent["status"];
+  paused: boolean;
   last_heartbeat_at: string | null;
   created_at: string;
   api_token: string;
@@ -42,7 +43,7 @@ export async function requireAgent(
 
   const result = await query<AuthedAgent>(
     `SELECT id, name, owner, machine_info, capabilities, max_concurrency,
-            status, last_heartbeat_at, created_at, api_token
+            status, paused, last_heartbeat_at, created_at, api_token
      FROM agents WHERE api_token = $1`,
     [token]
   );

@@ -2,6 +2,8 @@
 import type { FastifyInstance } from "fastify";
 import type { CalendarDay, CalendarResponse, ScheduledTaskLite, TaskStatus } from "@agentmq/shared";
 import { query } from "../db.js";
+import { requireUser } from "../userAuth.js";
+import { visibleSpacesClause } from "../spaces.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -64,6 +66,9 @@ export function registerCalendarRoutes(app: FastifyInstance): void {
   app.get<{
     Querystring: { project_id?: string; from?: string; to?: string };
   }>("/api/calendar", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+
     const { project_id: projectId, from: fromRaw, to: toRaw } = request.query;
 
     if (fromRaw && !DATE_RE.test(fromRaw)) {
@@ -82,11 +87,16 @@ export function registerCalendarRoutes(app: FastifyInstance): void {
     }
 
     try {
-      const activityParams: unknown[] = [from, to];
-      let activityProjectClause = "";
+      const { clause: spaceClause, params: spaceParams } = visibleSpacesClause(user, 2);
+      const visibleProjectsSubquery = `(
+        SELECT p.id FROM projects p LEFT JOIN spaces sp ON sp.id = p.space_id WHERE ${spaceClause}
+      )`;
+
+      const activityParams: unknown[] = [from, to, ...spaceParams];
+      let activityProjectClause = `AND a.project_id IN ${visibleProjectsSubquery}`;
       if (projectId) {
         activityParams.push(projectId);
-        activityProjectClause = `AND a.project_id = $${activityParams.length}`;
+        activityProjectClause += ` AND a.project_id = $${activityParams.length}`;
       }
 
       const activityResult = await query<ActivityBucketRow>(
@@ -103,11 +113,11 @@ export function registerCalendarRoutes(app: FastifyInstance): void {
         activityParams
       );
 
-      const scheduledParams: unknown[] = [from, to];
-      let scheduledProjectClause = "";
+      const scheduledParams: unknown[] = [from, to, ...spaceParams];
+      let scheduledProjectClause = `AND t.project_id IN ${visibleProjectsSubquery}`;
       if (projectId) {
         scheduledParams.push(projectId);
-        scheduledProjectClause = `AND t.project_id = $${scheduledParams.length}`;
+        scheduledProjectClause += ` AND t.project_id = $${scheduledParams.length}`;
       }
 
       const scheduledResult = await query<ScheduledRow>(
