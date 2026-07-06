@@ -2,10 +2,14 @@
 // omitted. Built-in node:readline only, no dependency.
 //
 // Uses the callback-based node:readline (not readline/promises): with piped
-// (non-TTY) stdin, readline/promises' sequential `.question()` calls can hang
-// after the first call once the underlying stream reports end-of-input, even
-// though more buffered lines remain. The callback API's event-driven `line`
-// handling does not have this issue, so we wrap it in a promise ourselves.
+// (non-TTY) stdin, calling `.question()` a second time can silently never
+// resolve once the underlying stream has already been fully buffered/ended —
+// there is no further 'line' event to fire the callback, and with nothing
+// else keeping the event loop alive Node just exits. To avoid that, a single
+// 'line' listener queues every line as it arrives; each prompt call takes the
+// next queued line if one is already buffered, or waits for the next 'line'
+// event otherwise (the interactive-TTY case, one line at a time). There is
+// exactly one place lines are consumed from, so no line is ever delivered twice.
 import { createInterface, type Interface } from "node:readline";
 import { stdin, stdout } from "node:process";
 
@@ -16,20 +20,38 @@ const DELETE = ""; // Delete (DEL)
 /** A prompt session shares one readline.Interface across multiple questions; call close() once done. */
 export class PromptSession {
   private rl: Interface | undefined;
+  private queuedLines: string[] = [];
+  private waiters: Array<(line: string) => void> = [];
 
   private interface(): Interface {
     if (!this.rl) {
-      this.rl = createInterface({ input: stdin, output: stdout });
+      const rl = createInterface({ input: stdin, output: stdout });
+      rl.on("line", (line) => {
+        const waiter = this.waiters.shift();
+        if (waiter) {
+          waiter(line);
+        } else {
+          this.queuedLines.push(line);
+        }
+      });
+      this.rl = rl;
     }
     return this.rl;
   }
 
+  /** Resolve with the next line: an already-buffered one if available, else the next 'line' event. */
+  private nextLine(): Promise<string> {
+    this.interface();
+    const queued = this.queuedLines.shift();
+    if (queued !== undefined) return Promise.resolve(queued);
+    return new Promise<string>((resolve) => this.waiters.push(resolve));
+  }
+
   /** Prompt for a plain visible line of input (e.g. username). */
-  promptLine(question: string): Promise<string> {
-    const rl = this.interface();
-    return new Promise<string>((resolve) => {
-      rl.question(question, (answer) => resolve(answer.trim()));
-    });
+  async promptLine(question: string): Promise<string> {
+    stdout.write(question);
+    const line = await this.nextLine();
+    return line.trim();
   }
 
   /**
@@ -54,6 +76,8 @@ export class PromptSession {
   close(): void {
     this.rl?.close();
     this.rl = undefined;
+    this.queuedLines = [];
+    this.waiters = [];
   }
 }
 
