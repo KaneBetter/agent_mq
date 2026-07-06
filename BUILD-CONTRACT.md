@@ -181,3 +181,58 @@ pnpm agentctl run
 - Small focused files, explicit error handling, validate inputs at the boundary, immutable-ish updates.
 - No secrets in code. No `any` where a shared type exists.
 - Every endpoint returns JSON `{ error }` with a proper status on failure.
+
+---
+
+# v3 delta — tags, scheduling, register-in-UI, activity + calendar
+
+Schema already migrated (`db/schema.sql`): `projects.tags text[]`, `tasks.tags text[]`,
+`tasks.scheduled_for timestamptz`, and a new `activity` table. Shared types already updated
+(`Project.tags`, `Task.tags`, `Task.scheduled_for`, `PublishTaskRequest.{tags,scheduled_for}`,
+`CreateProjectRequest.tags`, `RegisterAgentRequest.{project_id,group_name}`, `ActivityRecord`,
+`CalendarResponse`/`CalendarDay`/`ScheduledTaskLite`, new `API_ROUTES.activity`/`.calendar`,
+new EventType `task.scheduled`). Do NOT re-edit shared or schema.
+
+## Server changes (packages/server only)
+
+1. **Row mappers**: include `tags` (default `[]`) and `scheduled_for` (ISO or null) on every Task/TaskDetail; include `tags` on Project/ProjectSummary. pg returns text[] as JS array already.
+
+2. **Publish** (`POST /api/tasks`): accept `tags` (default `[]`) and `scheduled_for`.
+   - If `scheduled_for` parses to a FUTURE time: set `tasks.scheduled_for` AND `tasks.visible_after = scheduled_for` (claim already skips visible_after), and emit `task.scheduled` (not `task.published`).
+   - Else: normal publish, emit `task.published`. `scheduled_for` in the past/absent => immediate.
+   - Persist tags to the row.
+
+3. **Create project** (`POST /api/projects`): accept + store `tags`. `GET /api/projects` returns `tags`. Optional `?tag=` filter (`$1 = ANY(tags)`).
+
+4. **Tasks list** (`GET /api/tasks`): add optional `?tag=` filter (`$n = ANY(t.tags)`). Include `tags` + `scheduled_for` in results.
+
+5. **Register-to-project** (`POST /api/agents/register`): if body has `project_id`, after inserting the agent, upsert the group (`group_name` or `"default"`) for that project and insert a subscription (agent_id, project_id, group_id). Still returns `RegisterAgentResponse`. Emit `agent.registered`.
+
+6. **Activity persistence**: every `emitEvent` must also insert into `activity`
+   (type, project_id, task_id, agent_id, task_type, status, message, ts=event ts, meta='{}').
+   Implement a sink in `events.ts` (e.g. `setActivitySink(fn)`) that `index.ts` wires to a
+   fire-and-forget DB insert (catch + log; never block the request). Wire it after the pool exists.
+
+7. **New endpoint** `GET /api/activity?project_id=&type=&limit=` → `ActivityRecord[]` newest first
+   (limit default 100, cap 500). Join to fill `project_name` / `agent_name` when available.
+
+8. **New endpoint** `GET /api/calendar?project_id=&from=YYYY-MM-DD&to=YYYY-MM-DD` → `CalendarResponse`.
+   Default range = current month (1st..last day, server tz). For each day in [from,to]:
+   - `activity_total` = count of activity rows that day (optionally filtered by project);
+     `completed` = `task.completed`; `failed` = `task.failed` + `task.dead`;
+     `published` = `task.published` + `task.scheduled`.
+   - `scheduled` = tasks whose `scheduled_for` falls that day AND still `PENDING` (upcoming),
+     mapped to `ScheduledTaskLite` (id, type, tags, project_id, project_name, status, scheduled_for).
+   Bucket by `to_char(ts,'YYYY-MM-DD')` consistently; return every day in range (zero-filled).
+
+9. **Seed**: give the 3 projects tags — research `["llm","research"]`, content `["llm","writing"]`,
+   ops `["infra","gpu"]`. Keep idempotent.
+
+10. **Demo** (`demo.ts`): add 1-3 random tags per task; ~20% of published tasks get a
+    `scheduled_for` 2-40 min in the future (so the calendar's upcoming column has data).
+
+Verify: typecheck; migrate is already applied; boot on port 4998, then curl:
+publish a normal task + a scheduled task (`scheduled_for` future) + a tagged task;
+`GET /api/activity` shows rows; `GET /api/calendar` returns day buckets incl. the scheduled task;
+register with `project_id` auto-subscribes (claim then returns a task without a separate subscribe call).
+Paste evidence. Kill the test server after.
