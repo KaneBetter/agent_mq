@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { RegisterAgentResponse } from "@agentmq/shared";
 import { api, API_BASE } from "../api";
+import { useSpaces } from "../spaceContext";
 import { Modal, Tags } from "./ui";
 
 interface Props {
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export function RegisterAgentModal({ project, onClose, onRegistered }: Props) {
+  const { current } = useSpaces();
   const [name, setName] = useState("");
   const [owner, setOwner] = useState("");
   const [caps, setCaps] = useState("cpu");
@@ -31,6 +33,7 @@ export function RegisterAgentModal({ project, onClose, onRegistered }: Props) {
         owner: owner.trim() || undefined,
         capabilities: caps.split(",").map((s) => s.trim()).filter(Boolean),
         max_concurrency: concurrency,
+        space_id: current?.id,
         project_id: project?.id,
       });
       setDone(res);
@@ -50,11 +53,12 @@ export function RegisterAgentModal({ project, onClose, onRegistered }: Props) {
   }
 
   const runCmd =
+    `pnpm agent-mq login --server ${API_BASE}\n` +
     `pnpm agent-mq register --name "${name || "my-machine"}"` +
+    ` --space ${current?.name ?? "Public"}` +
     (owner ? ` --owner "${owner}"` : "") +
     ` --caps ${caps || "cpu"}` +
     (project ? ` --project ${project.name}` : "") +
-    ` --server ${API_BASE}` +
     (project ? `\npnpm agent-mq schedule install --interval 60 --project ${project.name}` : "") +
     `\npnpm agent-mq run`;
 
