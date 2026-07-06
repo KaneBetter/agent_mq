@@ -214,3 +214,72 @@ CREATE INDEX IF NOT EXISTS agent_schedules_project_idx ON agent_schedules(projec
 -- table UNIQUE can't enforce it — a partial unique index does).
 CREATE UNIQUE INDEX IF NOT EXISTS agent_schedules_site_uidx
   ON agent_schedules(agent_id) WHERE kind = 'site_update';
+
+-- ── v5: users, sessions, spaces + RBAC, agent rest, task checkpoint/reassign ──
+
+CREATE TABLE IF NOT EXISTS users (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  username      text NOT NULL UNIQUE,
+  email         text,
+  password_hash text NOT NULL,
+  display_name  text NOT NULL DEFAULT '',
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- Opaque session tokens (httpOnly cookie) → user.
+CREATE TABLE IF NOT EXISTS sessions (
+  token      text PRIMARY KEY,
+  user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id);
+
+-- Spaces: the outermost tenancy boundary. Topics + consumers belong to a space.
+CREATE TABLE IF NOT EXISTS spaces (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       text NOT NULL,
+  slug       text NOT NULL UNIQUE,
+  visibility text NOT NULL DEFAULT 'private' CHECK (visibility IN ('private','team','public')),
+  owner_id   uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Space membership + role.
+CREATE TABLE IF NOT EXISTS space_members (
+  space_id   uuid NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+  user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role       text NOT NULL DEFAULT 'member' CHECK (role IN ('admin','member','viewer')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (space_id, user_id)
+);
+
+-- Topics belong to a space.
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS space_id uuid REFERENCES spaces(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS projects_space_idx ON projects(space_id);
+
+-- Consumers: ownership + global manual pause.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS paused boolean NOT NULL DEFAULT false;
+
+-- Per-topic manual pause lives on the subscription.
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS paused boolean NOT NULL DEFAULT false;
+
+-- Recurring rest windows (quiet hours). project_id NULL = global (whole consumer).
+CREATE TABLE IF NOT EXISTS agent_rest_windows (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id    uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  project_id  uuid REFERENCES projects(id) ON DELETE CASCADE,   -- NULL = global
+  days_of_week int[] NOT NULL DEFAULT '{}',                     -- 0=Sun..6=Sat
+  start_time  text NOT NULL,                                    -- 'HH:MM'
+  end_time    text NOT NULL,                                    -- 'HH:MM'
+  timezone    text NOT NULL DEFAULT 'UTC',
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS rest_windows_agent_idx ON agent_rest_windows(agent_id);
+
+-- Task checkpoint (carried across stop/reassign) + targeted reassignment.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS state jsonb;                 -- resume checkpoint
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assign_to_agent_id uuid REFERENCES agents(id) ON DELETE SET NULL;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS progress numeric;           -- 0..1, optional display
+CREATE INDEX IF NOT EXISTS tasks_assign_to_idx ON tasks(assign_to_agent_id) WHERE assign_to_agent_id IS NOT NULL;

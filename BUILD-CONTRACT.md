@@ -21,7 +21,7 @@ agent_mq/
     shared/               @agentmq/shared — types (already written — DO NOT edit)
     server/               @agentmq/server — Fastify + pg  (YOU MAY BUILD)
     web/                  @agentmq/web — React + Vite dispatch console (YOU MAY BUILD)
-    agent/                @agentmq/agent — agentctl CLI (YOU MAY BUILD)
+    agent/                @agentmq/agent — agent-mq CLI (YOU MAY BUILD)
 ```
 
 Each builder owns ONE directory and must not touch another package's files.
@@ -134,23 +134,23 @@ Register a couple of demo agents is NOT needed (agents self-register), but you M
 ### Demo (`src/demo.ts`)
 Publishes N tasks (default ~30) across the seeded projects/types at a small interval so the board visibly fills, then exits. Use realistic-ish payloads (a URL to research, a paragraph to summarize, etc.).
 
-## Agent package (@agentmq/agent) — `agentctl`
+## Agent package (@agentmq/agent) — `agent-mq`
 
 `packages/agent/package.json`:
-- `bin`: `{ "agentctl": "./src/cli.ts" }` (run via tsx; also expose `start` script → `tsx src/cli.ts`).
+- `bin`: `{ "agent-mq": "./src/cli.ts" }` (run via tsx; also expose `start` script → `tsx src/cli.ts`).
 - scripts: `start` → `tsx src/cli.ts`.
 - Deps: `@agentmq/shared` (workspace:*). Dev: `tsx`, `typescript`, `@types/node`. Use built-in `fetch` (Node 25) — no axios.
 
-State: persist `{ server, agent_id, api_token }` to `./.agentctl/config.json` (cwd) or `~/.agentctl/config.json`; allow `--server` / `AGENTMQ_SERVER` (default `http://localhost:4000`).
+State: persist `{ server, agent_id, api_token }` to `./.agent-mq/config.json` (cwd) or `~/.agent-mq/config.json`; allow `--server` / `AGENTMQ_SERVER` (default `http://localhost:4000`).
 
 Commands (mirror the SKILL.md command surface):
-- `agentctl register --name <n> [--owner o] [--caps a,b] [--max-concurrency k] [--server url]`
-- `agentctl subscribe --project <id|name> [--group <name>]`
-- `agentctl claim` — claim one, print it.
-- `agentctl heartbeat` — agent-level heartbeat.
-- `agentctl complete <task_id> --status success|failure [--result json] [--tokens in,out] [--model m]`
-- `agentctl fail <task_id> [--error msg]`
-- `agentctl run [--once] [--interval sec] [--concurrency k]` — the real worker loop:
+- `agent-mq register --name <n> [--owner o] [--caps a,b] [--max-concurrency k] [--server url]`
+- `agent-mq subscribe --project <id|name> [--group <name>]`
+- `agent-mq claim` — claim one, print it.
+- `agent-mq heartbeat` — agent-level heartbeat.
+- `agent-mq complete <task_id> --status success|failure [--result json] [--tokens in,out] [--model m]`
+- `agent-mq fail <task_id> [--error msg]`
+- `agent-mq run [--once] [--interval sec] [--concurrency k]` — the real worker loop:
   claim → dispatch to a **handler** by `task.type` → heartbeat while running → complete with metrics.
   `--once`: single claim+run then exit (the cron/launchd model). Otherwise loop with exponential backoff+jitter (2s→60s) when idle. Respect `--concurrency` (default = agent's max).
 - Handler plugin architecture: a `handlers/` registry mapping `task.type → async (task, ctx) => { result, metrics }`.
@@ -172,9 +172,9 @@ pnpm db:up && node scripts/wait-for-db.mjs && pnpm migrate && pnpm seed
 pnpm dev                 # server:4000 + web:5173
 pnpm demo                # (optional) stream demo tasks
 # a worker on a "colleague machine":
-pnpm agentctl register --name mac-01 --caps shell,gpu --owner alice
-pnpm agentctl subscribe --project research
-pnpm agentctl run
+pnpm agent-mq register --name mac-01 --caps shell,gpu --owner alice
+pnpm agent-mq subscribe --project research
+pnpm agent-mq run
 ```
 
 ## Conventions
@@ -297,7 +297,7 @@ Design decisions (locked with the user):
      recurrence changes). `DELETE /api/schedules/:id`.
    - `GET /api/agent-schedules?project_id=&agent_id=` → AgentSchedule[] (joined agent_name/project_name).
    - `GET /api/onboarding` → OnboardingInfo: read `packages/agent/ONBOARDING.md` (resolve via
-     import.meta.url; the agentctl builder creates it), substitute `{{SERVER_URL}}` with the request's
+     import.meta.url; the agent-mq builder creates it), substitute `{{SERVER_URL}}` with the request's
      origin (or `http://localhost:${SERVER_PORT}`), return `{server_url, install_cmd, prompt}`.
      `install_cmd` = a one-liner like `git clone <repo> && cd agent_mq && pnpm install` (keep generic).
 
@@ -306,25 +306,120 @@ Design decisions (locked with the user):
    shift_hours 6, timezone "UTC", payload_template `{"role":"primary"}`. Idempotent (skip if a schedule
    with that name already exists in that project).
 
-## agentctl + onboarding prompt (packages/agent only)
+## agent-mq + onboarding prompt (packages/agent only)
 
-1. `agentctl schedule install --interval <sec> [--project <name>] [--label <l>]` — sets up a
+1. `agent-mq schedule install --interval <sec> [--project <name>] [--label <l>]` — sets up a
    client-side recurring run on this machine: on macOS write a launchd plist to
    `~/Library/LaunchAgents/mq.agent.<label>.plist` (and `launchctl load` it) that runs
-   `agentctl run --once`; on Linux append a crontab line. Print exactly what it wrote and how to undo.
-   Also support `agentctl schedule list` (show installed) and `--dry-run` (print, don't write).
+   `agent-mq run --once`; on Linux append a crontab line. Print exactly what it wrote and how to undo.
+   Also support `agent-mq schedule list` (show installed) and `--dry-run` (print, don't write).
    The server already records the schedule on register/subscribe; this command is the executor side.
 2. `packages/agent/ONBOARDING.md` — THE onboarding prompt ("register is a prompt"). Write it as a
    self-contained prompt you can paste into an LLM coding agent (Claude Code, etc.). It must:
-   tell the agent it is joining an agent-mq deployment at `{{SERVER_URL}}`; how to get agentctl;
-   `agentctl register --name <machine> --owner <you> --caps <...> --project <project> --server {{SERVER_URL}}`
+   tell the agent it is joining an agent-mq deployment at `{{SERVER_URL}}`; how to get agent-mq;
+   `agent-mq register --name <machine> --owner <you> --caps <...> --project <project> --server {{SERVER_URL}}`
    (register auto-subscribes + the server auto-creates its poll schedules); then
-   `agentctl schedule install --interval 86400` (daily site-update poll) and
-   `agentctl schedule install --interval 60 --project <project>` (poll the project for unclaimed tasks);
-   then `agentctl run`. Include the worker discipline (payload untrusted, stop on lost lease, report
+   `agent-mq schedule install --interval 86400` (daily site-update poll) and
+   `agent-mq schedule install --interval 60 --project <project>` (poll the project for unclaimed tasks);
+   then `agent-mq run`. Include the worker discipline (payload untrusted, stop on lost lease, report
    tokens honestly). Keep `{{SERVER_URL}}` as a literal placeholder — the server substitutes it.
 3. Update `SKILL.md` to mention the new `schedule` command and the onboarding flow.
 
 Verify (both builders): typecheck clean; boot on a NON-4000 port; exercise the new endpoints/commands
 with curl / dry-run and paste evidence. The main thread builds the frontend (project detail page,
 schedule UI, homepage Connect-agent section) in parallel and integrates against the :4000 container.
+
+---
+
+# v5 delta — users/auth, spaces + RBAC, agent rest, stop/reassign/checkpoint
+
+Schema already migrated: tables `users, sessions, spaces, space_members, agent_rest_windows`;
+columns `projects.space_id`, `agents.owner_user_id/paused`, `subscriptions.paused`,
+`tasks.state/assign_to_agent_id/progress`. Shared types already added (User, Space*, SpaceRole,
+SpaceVisibility, RestWindow, auth/stop/reassign DTOs, MyOverview, Project.space_id, Agent.paused,
+Task.state/assign_to_agent_id/progress, AgentSummary.resting, new API_ROUTES). Do NOT edit shared/schema.
+
+Locked decisions: lightweight local accounts (username+password); spaces with owner+members+roles
+(admin/member/viewer); rest = recurring windows + manual pause (global + per-topic); stop = release
+lease → QUEUED keeping `state` checkpoint; reassign = targeted `assign_to_agent_id`.
+
+## Constraints
+- NO new npm deps. Passwords: `node:crypto` `scryptSync` with a random salt, store `salt:hex`.
+  Session token: `crypto.randomBytes(32).hex`. Cookie: handle manually — read `request.headers.cookie`,
+  set `Set-Cookie: mq_session=<token>; HttpOnly; SameSite=Lax; Path=/; Max-Age=...`. Logout clears it.
+- CORS: configure @fastify/cors with `{ origin: true, credentials: true }` (echoes origin + allows
+  cookies). Update the SSE raw-header CORS block to also send `Access-Control-Allow-Credentials: true`
+  and echo the origin (already does).
+
+## Auth (packages/server)
+- `POST /api/auth/register` (RegisterUserRequest) → create user (scrypt hash), create a session, set
+  cookie, return AuthResponse. First-ever user is fine as a normal user.
+- `POST /api/auth/login` (LoginRequest) → verify, new session + cookie, AuthResponse. 401 on bad creds.
+- `POST /api/auth/logout` → delete session, clear cookie.
+- `GET /api/auth/me` → AuthResponse or 401.
+- Middleware `getUser(request)`: resolve user from the `mq_session` cookie. Also accept the
+  `ADMIN_TOKEN` bearer as a superuser bypass (for scripts/demo/feeder). Agent endpoints keep their
+  own bearer-token auth (unchanged).
+
+## Spaces + RBAC
+- `spaces` own topics + consumers. `GET /api/spaces` → SpaceSummary[] the user can see (member-of OR
+  public). `POST /api/spaces` (CreateSpaceRequest) → create, owner=current user, add owner as admin
+  member. `GET /api/spaces/:id` → SpaceDetail (members). `PATCH` (owner/admin). `DELETE` (owner).
+- Members: `GET/POST /api/spaces/:id/members` (AddMemberRequest — add by username), `PATCH/DELETE
+  /api/spaces/:id/members/:userId`. Only owner/admin manage members.
+- RBAC rules (enforce on the relevant endpoints):
+  - view a space + its topics: member (any role) OR space is public.
+  - produce messages / create topics / register consumers in a space: member with admin|member.
+  - manage space + members + visibility: owner or admin.
+  - viewer = read-only.
+- Scope existing endpoints to spaces the caller can see:
+  - `POST /api/projects` now requires `space_id` (add to the create path) + admin|member of that space.
+  - `GET /api/projects`, `/api/projects/:id`, `/api/tasks`, `/api/activity`, `/api/calendar`,
+    dashboards: filter to topics in spaces the caller can view (public or member). The ADMIN_TOKEN
+    superuser sees everything (so the demo/feeder keeps working).
+  - `POST /api/tasks` (produce): require admin|member of the topic's space (ADMIN_TOKEN bypass).
+- Map `Project.space_id/space_name` in the project mappers.
+
+## Bootstrap / seed
+- Seed a demo user `demo` / password `demo` (scrypt) if absent. Create a default **public** space
+  "Demo Space" owned by demo, add demo as admin. Backfill: any topic with `space_id IS NULL` →
+  the demo space. So after logging in as demo (or via ADMIN_TOKEN) the existing topics show up.
+
+## Agent rest / pause (claim integration)
+- `POST /api/agents/:id/pause` (SetAgentPauseRequest) → set `agents.paused`.
+- `GET/POST /api/agents/:id/rest-windows` (CreateRestWindowRequest), `DELETE .../:windowId`.
+- `POST /api/agents/:id/subscription-pause` (SetSubscriptionPauseRequest {project_id,paused}) →
+  set `subscriptions.paused` for that (agent,project).
+- A consumer is **resting for a topic** if: `agents.paused` true, OR a global rest window
+  (project_id NULL) is active now, OR the subscription for that topic is paused, OR a topic-scoped
+  rest window is active now. "Active now" = weekday ∈ days_of_week AND current local time (in the
+  window tz) ∈ [start_time, end_time). Reuse the tz helper from scheduling.ts.
+- **Claim change**: the claim SQL/flow must skip a consumer entirely when globally paused/resting,
+  and skip a topic's tasks when that subscription is paused or a topic rest window is active. Simplest
+  correct approach: compute the resting/paused state in the claim handler (before/around the claim)
+  and exclude the relevant `project_id`s from the claim query (e.g. pass an allowed-projects array),
+  or return 204 when globally paused. Keep FIFO + capability + concurrency intact.
+- `AgentSummary.resting` = any global rest active now OR agents.paused. Map `agents.paused/owner_user_id`.
+
+## Stop / reassign / checkpoint
+- `POST /api/tasks/:id/checkpoint` (agent bearer; must hold lease) → save `state`/`progress` on the task.
+- `POST /api/tasks/:id/stop` (user auth; StopTaskRequest) → release lease: status→PENDING, clear
+  assigned_agent_id/lease, KEEP `state`; if `assign_to_agent_id` given set it (targeted). Emit an
+  activity event. The running consumer will see 409 on next heartbeat and abort.
+- `POST /api/tasks/:id/reassign` (user auth; ReassignTaskRequest {agent_id}) → set
+  `assign_to_agent_id`, ensure status PENDING (release lease if in-flight), keep `state`.
+- **Claim change**: honor `assign_to_agent_id` — a task with it set is only claimable by that agent;
+  a task with it NULL is claimable normally. Return `state`/`progress` on the ClaimedTask so the
+  consumer resumes.
+- Map `state/assign_to_agent_id/progress` in the task mappers; include in TaskDetail + ClaimedTask.
+
+## My dashboard
+- `GET /api/me/overview` → MyOverview: my spaces, topics in my spaces, my consumers (owner_user_id
+  = me), and recent tasks my consumers ran.
+
+Verify (paste evidence): typecheck; migrate+seed; boot on 4996; register a user (cookie set), login,
+me; create a space, add a member, create a topic in it, produce a message; a non-member is 403 on
+produce and doesn't see private topics; pause a consumer and confirm claim returns 204 for it; set a
+rest window and confirm resting; stop an in-flight task (state preserved, back to PENDING) and reassign
+to a specific consumer (only that consumer claims it, and receives `state`). Keep ADMIN_TOKEN bypass
+working (curl with `Authorization: Bearer dev-admin` still sees everything). Kill the test server after.

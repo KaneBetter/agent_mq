@@ -30,10 +30,13 @@ export interface Agent {
   id: string;
   name: string;
   owner: string;
+  owner_user_id: string | null;
   machine_info: Record<string, unknown>;
   capabilities: string[];
   max_concurrency: number;
   status: AgentStatus;
+  /** Global manual pause — a paused consumer is never handed work. */
+  paused: boolean;
   last_heartbeat_at: string | null;
   created_at: string;
 }
@@ -47,6 +50,8 @@ export interface AgentSummary extends Agent {
   total_wall_time_ms: number;
   total_cost_usd: number;
   success_rate: number | null; // null when no finished tasks yet
+  /** True right now due to a rest window (independent of the manual `paused` flag). */
+  resting: boolean;
 }
 
 export interface Project {
@@ -54,6 +59,8 @@ export interface Project {
   name: string;
   description: string;
   tags: string[];
+  space_id: string | null;
+  space_name?: string | null;
   task_schema: Record<string, unknown> | null;
   created_at: string;
 }
@@ -113,6 +120,12 @@ export interface Task {
   scheduled_for: string | null;
   /** Provenance: the recurring schedule that generated this task, if any. */
   schedule_id: string | null;
+  /** Resume checkpoint preserved across stop/reassign; a new consumer reads it. */
+  state: Record<string, unknown> | null;
+  /** When set, only this consumer may claim the message (targeted reassignment). */
+  assign_to_agent_id: string | null;
+  /** Optional 0..1 progress for display. */
+  progress: number | null;
   dedup_key: string | null;
   last_error: string | null;
   created_at: string;
@@ -223,6 +236,8 @@ export interface CreateProjectRequest {
   description?: string;
   task_schema?: Record<string, unknown>;
   tags?: string[];
+  /** The space this topic belongs to (required by the v5 server; caller must be admin|member). */
+  space_id?: string;
   /** Optional default group name; defaults to "default". */
   default_group?: string;
 }
@@ -435,6 +450,122 @@ export interface CalendarResponse {
   days: CalendarDay[];
 }
 
+// ── v5: users, sessions, spaces + RBAC ─────────────────────────────────────
+export interface User {
+  id: string;
+  username: string;
+  email: string | null;
+  display_name: string;
+  created_at: string;
+}
+
+export interface RegisterUserRequest {
+  username: string;
+  password: string;
+  email?: string;
+  display_name?: string;
+}
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+/** Returned by register/login/me. Session is set as an httpOnly cookie. */
+export interface AuthResponse {
+  user: User;
+}
+
+export type SpaceVisibility = "private" | "team" | "public";
+export type SpaceRole = "admin" | "member" | "viewer";
+
+export interface Space {
+  id: string;
+  name: string;
+  slug: string;
+  visibility: SpaceVisibility;
+  owner_id: string | null;
+  created_at: string;
+}
+export interface SpaceMemberInfo {
+  user_id: string;
+  username: string;
+  display_name: string;
+  role: SpaceRole;
+  created_at: string;
+}
+/** A space with the viewer's effective role + aggregate counts. */
+export interface SpaceSummary extends Space {
+  owner_username: string | null;
+  my_role: SpaceRole | null; // null = not a member (public read-only)
+  topic_count: number;
+  member_count: number;
+}
+export interface SpaceDetail extends SpaceSummary {
+  members: SpaceMemberInfo[];
+}
+
+export interface CreateSpaceRequest {
+  name: string;
+  visibility?: SpaceVisibility;
+}
+export interface UpdateSpaceRequest {
+  name?: string;
+  visibility?: SpaceVisibility;
+}
+export interface AddMemberRequest {
+  username: string;
+  role?: SpaceRole;
+}
+
+// ── v5: agent rest / pause ─────────────────────────────────────────────────
+export interface RestWindow {
+  id: string;
+  agent_id: string;
+  project_id: string | null; // null = global
+  project_name?: string | null;
+  days_of_week: number[]; // 0=Sun..6=Sat
+  start_time: string; // 'HH:MM'
+  end_time: string; // 'HH:MM'
+  timezone: string;
+  created_at: string;
+}
+export interface CreateRestWindowRequest {
+  project_id?: string | null;
+  days_of_week: number[];
+  start_time: string;
+  end_time: string;
+  timezone?: string;
+}
+export interface SetAgentPauseRequest {
+  paused: boolean;
+}
+export interface SetSubscriptionPauseRequest {
+  project_id: string;
+  paused: boolean;
+}
+
+// ── v5: stop / reassign / checkpoint ───────────────────────────────────────
+/** Consumer posts partial progress so a stopped/reassigned message can resume. */
+export interface CheckpointRequest {
+  state?: Record<string, unknown>;
+  progress?: number;
+}
+/** Stop an in-flight message: release the lease back to QUEUED, keep the checkpoint. */
+export interface StopTaskRequest {
+  /** Optionally reassign to a specific consumer at the same time. */
+  assign_to_agent_id?: string | null;
+}
+export interface ReassignTaskRequest {
+  agent_id: string; // the consumer to reassign to
+}
+
+// ── My dashboard (GET /api/me/overview) ────────────────────────────────────
+export interface MyOverview {
+  spaces: SpaceSummary[];
+  topics: ProjectSummary[];
+  agents: AgentSummary[];
+  recent_tasks: TaskDetail[]; // what my consumers did
+}
+
 // ── Shared constants ───────────────────────────────────────────────────────
 export const API_ROUTES = {
   register: "/api/agents/register",
@@ -463,4 +594,28 @@ export const API_ROUTES = {
   calendar: "/api/calendar",
   events: "/api/events",
   health: "/api/health",
+
+  // v5 — auth
+  authRegister: "/api/auth/register",
+  authLogin: "/api/auth/login",
+  authLogout: "/api/auth/logout",
+  authMe: "/api/auth/me",
+  myOverview: "/api/me/overview",
+
+  // v5 — spaces + members
+  spaces: "/api/spaces",
+  space: (id: string) => `/api/spaces/${id}`,
+  spaceMembers: (id: string) => `/api/spaces/${id}/members`,
+  spaceMember: (id: string, userId: string) => `/api/spaces/${id}/members/${userId}`,
+
+  // v5 — agent rest / pause
+  agentPause: (id: string) => `/api/agents/${id}/pause`,
+  agentRestWindows: (id: string) => `/api/agents/${id}/rest-windows`,
+  agentRestWindow: (id: string, windowId: string) => `/api/agents/${id}/rest-windows/${windowId}`,
+  subscriptionPause: (agentId: string) => `/api/agents/${agentId}/subscription-pause`,
+
+  // v5 — stop / reassign / checkpoint
+  taskStop: (id: string) => `/api/tasks/${id}/stop`,
+  taskReassign: (id: string) => `/api/tasks/${id}/reassign`,
+  taskCheckpoint: (id: string) => `/api/tasks/${id}/checkpoint`,
 } as const;
