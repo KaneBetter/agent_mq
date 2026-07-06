@@ -45,7 +45,7 @@ function line(e: ActivityRecord) {
   }
 }
 
-export function Activity({ live, initialProject }: { live: boolean; initialProject?: string }) {
+export function Activity({ live, initialProject, spaceId }: { live: boolean; initialProject?: string; spaceId?: string | null }) {
   const [projectId, setProjectId] = useState(initialProject ?? "");
   const [type, setType] = useState<EventType | "">("");
   const projects = usePoll(() => api.projects(), [], 0);
@@ -55,7 +55,12 @@ export function Activity({ live, initialProject }: { live: boolean; initialProje
     live ? 2500 : 9000
   );
 
-  const rows = activity.data ?? [];
+  // Scope the topic dropdown + the feed to the current space (topic events + agent events).
+  const spaceTopics = spaceId ? (projects.data ?? []).filter((p) => p.space_id === spaceId) : (projects.data ?? []);
+  const spaceTopicIds = new Set(spaceTopics.map((p) => p.id));
+  const rows = (activity.data ?? []).filter(
+    (e) => !spaceId || !e.project_id || spaceTopicIds.has(e.project_id)
+  );
 
   return (
     <Panel
@@ -65,7 +70,7 @@ export function Activity({ live, initialProject }: { live: boolean; initialProje
         <div className="filters">
           <select className="select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
             <option value="">all topics</option>
-            {(projects.data ?? []).map((p) => (
+            {spaceTopics.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
