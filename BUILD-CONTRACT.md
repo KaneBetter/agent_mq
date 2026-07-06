@@ -423,3 +423,58 @@ produce and doesn't see private topics; pause a consumer and confirm claim retur
 rest window and confirm resting; stop an in-flight task (state preserved, back to PENDING) and reassign
 to a specific consumer (only that consumer claims it, and receives `state`). Keep ADMIN_TOKEN bypass
 working (curl with `Authorization: Bearer dev-admin` still sees everything). Kill the test server after.
+
+---
+
+# v6 delta — consumer↔space binding, default private/public spaces, CLI login
+
+Schema migrated: `agents.space_id` + a partial unique index enforcing ONE public space.
+Shared types updated: `Agent.space_id/space_name`, `RegisterAgentRequest.space_id`. Do NOT edit shared/schema.
+
+Model (locked with the user): every user has exactly ONE private space (auto-created on register);
+the platform has exactly ONE public space all users can read; team spaces are created explicitly.
+A consumer belongs to exactly one space; user → (member of space) → register consumer into space →
+subscribe to topics in that space.
+
+## Server refinements (packages/server)
+1. Map `Agent.space_id` + `space_name` (join) in the agent mappers (list + detail + AgentSummary).
+2. `POST /api/agents/register` now REQUIRES an authenticated caller (session cookie OR ADMIN_TOKEN
+   bearer) AND `space_id`. 401 if no auth; 400 if no space_id; 403 if the user isn't admin|member of
+   that space (ADMIN_TOKEN bypasses). Set `agents.space_id` + `owner_user_id` (the session user; null
+   for ADMIN_TOKEN). If `project_id` given it must be a topic in that space (else 400); auto-subscribe.
+3. Default spaces:
+   - `POST /api/auth/register` (user signup): after creating the user, auto-create their private space
+     named `"<display_name or username>'s space"` (visibility `private`, owner = the user, add them as
+     `admin` member). Idempotent-ish (one private space per user; if they already have one, skip).
+   - Ensure exactly ONE public space exists at boot (call an ensurePublicSpace() on startup or in seed):
+     name it `"Public"` (owner NULL/system). All users can view it (public visibility already grants view).
+   - `POST /api/spaces` creates TEAM spaces only — force `visibility: 'team'` (ignore/deny private|public
+     from the client). Private is auto; public is the singleton.
+4. Seed: ensure the single `"Public"` space; keep/convert the old "Demo Space" into it OR create Public
+   and move demo's topics there; give the `demo` user a private space via the same auto-create path;
+   backfill any orphan (space_id NULL) topics into the Public space.
+5. `GET /api/spaces` returns: the user's private space + the Public space + their team spaces (member-of
+   or public), each with `my_role` and counts (unchanged shape).
+
+Verify: typecheck; migrate+seed; register a NEW user → they get a private space (GET /api/spaces shows
+"<name>'s space"[private/admin] + Public[public]); POST /api/spaces returns a team space (visibility
+team even if you asked for public); register a consumer with space_id (as a member) → agent has
+space_id; without space_id → 400; not a member → 403. ADMIN_TOKEN register still works. Kill test server.
+
+## agent-mq CLI login (packages/agent)
+Add `src/session.ts` + commands. Management calls (register/subscribe/spaces) authenticate as a logged-in
+USER (session cookie), distinct from the per-agent Bearer token used by claim/heartbeat/complete.
+1. `agent-mq login [--server url] [--username u] [--password p]` — POST `/api/auth/login`; capture the
+   `mq_session` value from the response `Set-Cookie` header; store `{ session_token, username }` in the
+   config file. If username/password omitted, prompt on stdin (password hidden if practical, else plain).
+   Print `logged in as <username>`.
+2. `agent-mq whoami` — GET `/api/auth/me` sending `Cookie: mq_session=<token>`; print the user or
+   `not logged in`. `agent-mq logout` clears the stored session.
+3. API client: send `Cookie: mq_session=<token>` on user/management requests; keep Bearer agent-token on
+   claim/heartbeat/complete. Add a `spaces()` call (GET /api/spaces) for `--space` name resolution.
+4. `agent-mq register` now requires a stored session (`--space <slug|id>` required): resolve `--space`
+   name→id via GET /api/spaces, send `space_id`. If not logged in → clear error `run 'agent-mq login' first`.
+5. Update ONBOARDING.md + SKILL.md: the flow is now `agent-mq login` → `agent-mq register --space <s> --project <p> ...` → `schedule install` → `run`.
+
+Verify: typecheck; `agent-mq login --help`, `whoami` with no session prints "not logged in"; dry-run /
+help for register shows `--space`. (Full e2e needs the server; the integrator runs it against :4000.)

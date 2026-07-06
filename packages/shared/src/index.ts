@@ -31,6 +31,9 @@ export interface Agent {
   name: string;
   owner: string;
   owner_user_id: string | null;
+  /** The space this consumer belongs to (one space per consumer). */
+  space_id: string | null;
+  space_name?: string | null;
   machine_info: Record<string, unknown>;
   capabilities: string[];
   max_concurrency: number;
@@ -171,6 +174,8 @@ export interface RegisterAgentRequest {
   capabilities?: string[];
   machine_info?: Record<string, unknown>;
   max_concurrency?: number;
+  /** The space to register this consumer into (required in v6; caller must be a member). */
+  space_id?: string;
   /** When set, the server also subscribes the new agent to this project in one step. */
   project_id?: string;
   group_name?: string;

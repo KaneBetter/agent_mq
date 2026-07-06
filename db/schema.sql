@@ -283,3 +283,9 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS state jsonb;                 -- resum
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assign_to_agent_id uuid REFERENCES agents(id) ON DELETE SET NULL;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS progress numeric;           -- 0..1, optional display
 CREATE INDEX IF NOT EXISTS tasks_assign_to_idx ON tasks(assign_to_agent_id) WHERE assign_to_agent_id IS NOT NULL;
+
+-- ── v6: consumers belong to a space ────────────────────────────────────────
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS space_id uuid REFERENCES spaces(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS agents_space_idx ON agents(space_id);
+-- Enforce a single platform-wide public space via a partial unique index on visibility.
+CREATE UNIQUE INDEX IF NOT EXISTS spaces_single_public_uidx ON spaces((visibility)) WHERE visibility = 'public';
