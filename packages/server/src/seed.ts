@@ -5,6 +5,7 @@ import { pool } from "./db.js";
 interface ProjectSeed {
   name: string;
   description: string;
+  tags: string[];
   taskTypes: Array<{
     type: string;
     description: string;
@@ -16,6 +17,7 @@ const PROJECTS: ProjectSeed[] = [
   {
     name: "research",
     description: "Web research and document summarization tasks.",
+    tags: ["llm", "research"],
     taskTypes: [
       {
         type: "web.research",
@@ -32,6 +34,7 @@ const PROJECTS: ProjectSeed[] = [
   {
     name: "content",
     description: "Content drafting and translation tasks.",
+    tags: ["llm", "writing"],
     taskTypes: [
       {
         type: "draft.article",
@@ -48,6 +51,7 @@ const PROJECTS: ProjectSeed[] = [
   {
     name: "ops",
     description: "Operational tasks requiring special capabilities.",
+    tags: ["infra", "gpu"],
     taskTypes: [
       {
         type: "shell.command",
@@ -70,11 +74,13 @@ async function seed(): Promise<void> {
       await client.query("BEGIN");
 
       const projectResult = await client.query<{ id: string }>(
-        `INSERT INTO projects (name, description)
-         VALUES ($1, $2)
-         ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
+        `INSERT INTO projects (name, description, tags)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (name) DO UPDATE SET
+           description = EXCLUDED.description,
+           tags        = CASE WHEN projects.tags = '{}' THEN EXCLUDED.tags ELSE projects.tags END
          RETURNING id`,
-        [project.name, project.description]
+        [project.name, project.description, project.tags]
       );
       const projectId = projectResult.rows[0]?.id;
 

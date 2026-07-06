@@ -1,33 +1,12 @@
 // The claim algorithm: FIFO + capability hard-filter + per-agent concurrency limit.
 // Implements the exact transaction from BUILD-CONTRACT.md — do not deviate.
 import type { PoolClient } from "pg";
-import type { ClaimedTask, Task, TaskStatus } from "@agentmq/shared";
+import type { ClaimedTask } from "@agentmq/shared";
 import { INFLIGHT_STATUSES } from "@agentmq/shared";
 import { withTx } from "./db.js";
 import { env } from "./env.js";
 import type { AuthedAgent } from "./auth.js";
-
-interface ClaimedTaskRow {
-  id: string;
-  project_id: string;
-  type: string;
-  payload: Record<string, unknown>;
-  priority: number;
-  required_capabilities: string[];
-  target_group_id: string | null;
-  status: TaskStatus;
-  retry_count: number;
-  max_retries: number;
-  assigned_agent_id: string | null;
-  group_id: string | null;
-  claimed_at: string | null;
-  lease_expires_at: string | null;
-  visible_after: string | null;
-  dedup_key: string | null;
-  last_error: string | null;
-  created_at: string;
-  completed_at: string | null;
-}
+import { mapTaskRow, type TaskRow } from "./rowMappers.js";
 
 async function countInflight(client: PoolClient, agentId: string): Promise<number> {
   const result = await client.query<{ count: string }>(
@@ -57,7 +36,7 @@ export async function claimTask(agent: AuthedAgent): Promise<ClaimedTask | null>
       return null;
     }
 
-    const result = await client.query<ClaimedTaskRow>(
+    const result = await client.query<TaskRow>(
       `UPDATE tasks t SET
           status            = 'CLAIMED',
           assigned_agent_id = $1,
@@ -87,27 +66,7 @@ export async function claimTask(agent: AuthedAgent): Promise<ClaimedTask | null>
 
     const projectName = await fetchProjectName(client, row.project_id);
 
-    const task: Task = {
-      id: row.id,
-      project_id: row.project_id,
-      type: row.type,
-      payload: row.payload,
-      priority: row.priority,
-      required_capabilities: row.required_capabilities,
-      target_group_id: row.target_group_id,
-      status: row.status,
-      retry_count: row.retry_count,
-      max_retries: row.max_retries,
-      assigned_agent_id: row.assigned_agent_id,
-      group_id: row.group_id,
-      claimed_at: row.claimed_at,
-      lease_expires_at: row.lease_expires_at,
-      visible_after: row.visible_after,
-      dedup_key: row.dedup_key,
-      last_error: row.last_error,
-      created_at: row.created_at,
-      completed_at: row.completed_at,
-    };
+    const task = mapTaskRow(row);
 
     const claimed: ClaimedTask = {
       ...task,

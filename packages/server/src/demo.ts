@@ -11,6 +11,26 @@ interface DemoTaskSpec {
   project: string;
   type: string;
   payload: () => Record<string, unknown>;
+  tagPool: string[];
+}
+
+// ~20% of published tasks get a near-future scheduled_for so the calendar's
+// upcoming column has data to show.
+const SCHEDULED_PROBABILITY = 0.2;
+const SCHEDULED_MIN_MS = 2 * 60_000;
+const SCHEDULED_MAX_MS = 40 * 60_000;
+
+/** Picks 1-3 random tags from the pool (no duplicates), plain Math.random — one-shot script. */
+function pickTags(pool: string[]): string[] {
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  const count = Math.min(pool.length, 1 + Math.floor(Math.random() * 3));
+  return shuffled.slice(0, count);
+}
+
+function maybeScheduledFor(): string | undefined {
+  if (Math.random() >= SCHEDULED_PROBABILITY) return undefined;
+  const delayMs = SCHEDULED_MIN_MS + Math.random() * (SCHEDULED_MAX_MS - SCHEDULED_MIN_MS);
+  return new Date(Date.now() + delayMs).toISOString();
 }
 
 const RESEARCH_URLS = [
@@ -55,31 +75,37 @@ const SPECS: DemoTaskSpec[] = [
     project: "research",
     type: "web.research",
     payload: () => ({ url: pick(RESEARCH_URLS), question: "Summarize the key facts." }),
+    tagPool: ["llm", "research", "web"],
   },
   {
     project: "research",
     type: "summarize.doc",
     payload: () => ({ document: pick(SUMMARIZE_DOCS) }),
+    tagPool: ["llm", "research", "docs"],
   },
   {
     project: "content",
     type: "draft.article",
     payload: () => ({ brief: pick(ARTICLE_BRIEFS), tone: "friendly" }),
+    tagPool: ["llm", "writing", "content"],
   },
   {
     project: "content",
     type: "translate.text",
     payload: () => pick(TRANSLATE_TEXTS),
+    tagPool: ["llm", "writing", "translate"],
   },
   {
     project: "ops",
     type: "shell.command",
     payload: () => ({ cmd: pick(SHELL_COMMANDS) }),
+    tagPool: ["infra", "shell"],
   },
   {
     project: "ops",
     type: "image.generate",
     payload: () => ({ prompt: pick(IMAGE_PROMPTS), size: "512x512" }),
+    tagPool: ["infra", "gpu", "image"],
   },
 ];
 
@@ -106,6 +132,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function publishTask(projectId: string, spec: DemoTaskSpec): Promise<void> {
+  const tags = pickTags(spec.tagPool);
+  const scheduledFor = maybeScheduledFor();
+
   const response = await fetch(`${SERVER_URL}/api/tasks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -114,6 +143,8 @@ async function publishTask(projectId: string, spec: DemoTaskSpec): Promise<void>
       type: spec.type,
       payload: spec.payload(),
       priority: 0,
+      tags,
+      scheduled_for: scheduledFor,
     }),
   });
   if (!response.ok) {
@@ -121,7 +152,8 @@ async function publishTask(projectId: string, spec: DemoTaskSpec): Promise<void>
     return;
   }
   const task = (await response.json()) as { id: string };
-  console.log(`[demo] published ${spec.type} -> ${task.id}`);
+  const scheduleNote = scheduledFor ? ` (scheduled for ${scheduledFor})` : "";
+  console.log(`[demo] published ${spec.type} -> ${task.id} tags=[${tags.join(",")}]${scheduleNote}`);
 }
 
 async function main(): Promise<void> {

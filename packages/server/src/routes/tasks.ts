@@ -70,21 +70,36 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       const targetGroupId = body.target_group_id ?? null;
       const maxRetries =
         typeof body.max_retries === "number" ? body.max_retries : env.DEFAULT_MAX_RETRIES;
+      const tags = Array.isArray(body.tags) ? body.tags.filter((t) => typeof t === "string") : [];
+
+      // scheduled_for: only honored when it parses to a valid, FUTURE timestamp.
+      // Past/absent/invalid => immediate publish (scheduled_for stays null).
+      let scheduledFor: string | null = null;
+      if (typeof body.scheduled_for === "string" && body.scheduled_for.trim().length > 0) {
+        const parsed = new Date(body.scheduled_for);
+        if (!Number.isNaN(parsed.getTime()) && parsed.getTime() > Date.now()) {
+          scheduledFor = parsed.toISOString();
+        }
+      }
+      const isScheduled = scheduledFor !== null;
 
       const result = await client.query<TaskRow>(
         `INSERT INTO tasks
-           (project_id, type, payload, priority, required_capabilities, target_group_id, max_retries, dedup_key)
-         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8)
+           (project_id, type, tags, payload, priority, required_capabilities, target_group_id,
+            max_retries, dedup_key, scheduled_for, visible_after)
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $10)
          RETURNING *`,
         [
           projectId,
           type,
+          tags,
           JSON.stringify(payload),
           priority,
           requiredCapabilities,
           targetGroupId,
           maxRetries,
           body.dedup_key ?? null,
+          scheduledFor,
         ]
       );
 
@@ -98,12 +113,13 @@ export function registerTaskRoutes(app: FastifyInstance): void {
 
       const task = mapTaskRow(row);
       emitEvent({
-        type: "task.published",
+        type: isScheduled ? "task.scheduled" : "task.published",
         task_id: task.id,
         task_type: task.type,
         project_id: task.project_id,
         project_name: projectName,
         status: task.status,
+        message: isScheduled ? `Scheduled for ${task.scheduled_for}` : undefined,
       });
 
       return reply.code(201).send(task);
@@ -120,9 +136,15 @@ export function registerTaskRoutes(app: FastifyInstance): void {
   });
 
   app.get<{
-    Querystring: { status?: string; project_id?: string; type?: string; limit?: string };
+    Querystring: {
+      status?: string;
+      project_id?: string;
+      type?: string;
+      tag?: string;
+      limit?: string;
+    };
   }>("/api/tasks", async (request, reply) => {
-    const { status, project_id: projectId, type } = request.query;
+    const { status, project_id: projectId, type, tag } = request.query;
     const limit = Math.min(Math.max(Number(request.query.limit) || 100, 1), 1000);
 
     if (status && !TASK_STATUSES.includes(status as TaskStatus)) {
@@ -143,6 +165,10 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     if (type) {
       params.push(type);
       conditions.push(`t.type = $${params.length}`);
+    }
+    if (tag) {
+      params.push(tag);
+      conditions.push(`$${params.length} = ANY(t.tags)`);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";

@@ -7,6 +7,7 @@ export interface TaskRow {
   id: string;
   project_id: string;
   type: string;
+  tags: string[] | null;
   payload: Record<string, unknown>;
   priority: number;
   required_capabilities: string[];
@@ -19,6 +20,7 @@ export interface TaskRow {
   claimed_at: string | null;
   lease_expires_at: string | null;
   visible_after: string | null;
+  scheduled_for: string | null;
   dedup_key: string | null;
   last_error: string | null;
   created_at: string;
@@ -30,6 +32,7 @@ export function mapTaskRow(row: TaskRow): Task {
     id: row.id,
     project_id: row.project_id,
     type: row.type,
+    tags: row.tags ?? [],
     payload: row.payload,
     priority: row.priority,
     required_capabilities: row.required_capabilities,
@@ -42,6 +45,7 @@ export function mapTaskRow(row: TaskRow): Task {
     claimed_at: row.claimed_at,
     lease_expires_at: row.lease_expires_at,
     visible_after: row.visible_after,
+    scheduled_for: row.scheduled_for,
     dedup_key: row.dedup_key,
     last_error: row.last_error,
     created_at: row.created_at,

@@ -20,8 +20,25 @@ class EventBus extends EventEmitter {
 
 export const eventBus = new EventBus();
 
+/** Fire-and-forget persistence hook, wired by index.ts once the DB pool exists. */
+type ActivitySink = (event: LiveEvent) => void;
+let activitySink: ActivitySink | null = null;
+
+/** Registers the sink that persists every emitted event to the `activity` table. */
+export function setActivitySink(sink: ActivitySink): void {
+  activitySink = sink;
+}
+
 export function emitEvent(event: Omit<LiveEvent, "ts"> & { ts?: string }): void {
-  eventBus.publish({ ts: new Date().toISOString(), ...event });
+  const fullEvent: LiveEvent = { ts: new Date().toISOString(), ...event };
+  eventBus.publish(fullEvent);
+  if (activitySink) {
+    try {
+      activitySink(fullEvent);
+    } catch (err) {
+      console.error("[events] activity sink threw synchronously", err);
+    }
+  }
 }
 
 /** Registers `request`/`reply` as an SSE stream that forwards bus events as JSON. */

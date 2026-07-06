@@ -6,6 +6,7 @@ interface ProjectRow {
   id: string;
   name: string;
   description: string;
+  tags: string[] | null;
   task_schema: Record<string, unknown> | null;
   created_at: string;
 }
@@ -15,6 +16,7 @@ function mapProjectRow(row: ProjectRow): Project {
     id: row.id,
     name: row.name,
     description: row.description,
+    tags: row.tags ?? [],
     task_schema: row.task_schema,
     created_at: row.created_at,
   };
@@ -29,6 +31,7 @@ export function registerProjectRoutes(app: FastifyInstance): void {
     }
     const description = typeof body.description === "string" ? body.description : "";
     const taskSchema = body.task_schema ?? null;
+    const tags = Array.isArray(body.tags) ? body.tags.filter((t) => typeof t === "string") : [];
     const defaultGroup =
       typeof body.default_group === "string" && body.default_group.trim().length > 0
         ? body.default_group.trim()
@@ -39,10 +42,10 @@ export function registerProjectRoutes(app: FastifyInstance): void {
       await client.query("BEGIN");
 
       const projectResult = await client.query<ProjectRow>(
-        `INSERT INTO projects (name, description, task_schema)
-         VALUES ($1, $2, $3::jsonb)
-         RETURNING id, name, description, task_schema, created_at`,
-        [name, description, taskSchema ? JSON.stringify(taskSchema) : null]
+        `INSERT INTO projects (name, description, task_schema, tags)
+         VALUES ($1, $2, $3::jsonb, $4)
+         RETURNING id, name, description, task_schema, tags, created_at`,
+        [name, description, taskSchema ? JSON.stringify(taskSchema) : null, tags]
       );
 
       const row = projectResult.rows[0];
@@ -71,10 +74,15 @@ export function registerProjectRoutes(app: FastifyInstance): void {
     }
   });
 
-  app.get("/api/projects", async (request, reply) => {
+  app.get<{ Querystring: { tag?: string } }>("/api/projects", async (request, reply) => {
+    const { tag } = request.query;
     try {
       const projectsResult = await query<ProjectRow>(
-        `SELECT id, name, description, task_schema, created_at FROM projects ORDER BY created_at ASC`
+        tag
+          ? `SELECT id, name, description, task_schema, tags, created_at FROM projects
+             WHERE $1 = ANY(tags) ORDER BY created_at ASC`
+          : `SELECT id, name, description, task_schema, tags, created_at FROM projects ORDER BY created_at ASC`,
+        tag ? [tag] : []
       );
 
       const summaries: ProjectSummary[] = [];

@@ -9,7 +9,7 @@ import type {
   RegisterAgentResponse,
   TaskDetail,
 } from "@agentmq/shared";
-import { query } from "../db.js";
+import { pool, query } from "../db.js";
 import { requireAgent } from "../auth.js";
 import { emitEvent } from "../events.js";
 import { mapTaskDetailRow, TASK_DETAIL_SELECT, type TaskDetailRow } from "../rowMappers.js";
@@ -58,9 +58,17 @@ export function registerAgentRoutes(app: FastifyInstance): void {
         : 3;
 
     const apiToken = crypto.randomBytes(32).toString("hex");
+    const projectId = typeof body.project_id === "string" ? body.project_id : "";
+    const groupName =
+      typeof body.group_name === "string" && body.group_name.trim().length > 0
+        ? body.group_name.trim()
+        : "default";
 
+    const client = await pool.connect();
     try {
-      const result = await query<AgentRow>(
+      await client.query("BEGIN");
+
+      const result = await client.query<AgentRow>(
         `INSERT INTO agents (name, owner, machine_info, capabilities, api_token, max_concurrency, status, last_heartbeat_at)
          VALUES ($1, $2, $3::jsonb, $4, $5, $6, 'online', now())
          RETURNING id, name, owner, machine_info, capabilities, max_concurrency, status, last_heartbeat_at, created_at`,
@@ -69,15 +77,50 @@ export function registerAgentRoutes(app: FastifyInstance): void {
 
       const row = result.rows[0];
       if (!row) {
+        await client.query("ROLLBACK");
         return reply.code(500).send({ error: "Failed to register agent" });
       }
 
       const agent = mapAgentRow(row);
 
+      // Optional register-in-project: upsert the group for this project, then subscribe.
+      if (projectId) {
+        const projectResult = await client.query<{ id: string }>(
+          `SELECT id FROM projects WHERE id = $1`,
+          [projectId]
+        );
+        if (!projectResult.rows[0]) {
+          await client.query("ROLLBACK");
+          return reply.code(404).send({ error: "Project not found" });
+        }
+
+        const groupResult = await client.query<{ id: string }>(
+          `INSERT INTO groups (name, project_id) VALUES ($1, $2)
+           ON CONFLICT (project_id, name) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id`,
+          [groupName, projectId]
+        );
+        const groupId = groupResult.rows[0]?.id;
+        if (!groupId) {
+          await client.query("ROLLBACK");
+          return reply.code(500).send({ error: "Failed to resolve group" });
+        }
+
+        await client.query(
+          `INSERT INTO subscriptions (agent_id, project_id, group_id)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (agent_id, project_id, group_id) DO NOTHING`,
+          [agent.id, projectId, groupId]
+        );
+      }
+
+      await client.query("COMMIT");
+
       emitEvent({
         type: "agent.registered",
         agent_id: agent.id,
         agent_name: agent.name,
+        project_id: projectId || undefined,
         message: `Agent ${agent.name} registered`,
       });
       emitEvent({
@@ -93,8 +136,11 @@ export function registerAgentRoutes(app: FastifyInstance): void {
       };
       return reply.code(201).send(response);
     } catch (err) {
+      await client.query("ROLLBACK");
       request.log.error(err, "agent registration failed");
       return reply.code(500).send({ error: "Failed to register agent" });
+    } finally {
+      client.release();
     }
   });
 
