@@ -215,12 +215,12 @@ body {
 .board-col-head { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--line); font-family: var(--font-display); font-size: 11.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--txt-1); }
 .board-col-head .n { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--txt-2); }
 .board-col-body { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; max-height: 560px; }
-.lane { border: 1px dashed var(--line-2); border-radius: var(--radius); padding: 8px; background: var(--bg-3); }
+.lane { flex: 0 0 auto; border: 1px dashed var(--line-2); border-radius: var(--radius); padding: 8px; background: var(--bg-3); }
 .lane-head { display: flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 10.5px; color: var(--txt-2); letter-spacing: 0.03em; margin-bottom: 7px; }
 .lane-head .cap { margin-left: auto; color: var(--txt-3); }
 
 .sig {
-  position: relative; border: 1px solid var(--line); border-radius: var(--radius);
+  position: relative; flex: 0 0 auto; border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--bg-1); padding: 9px 11px 9px 13px; overflow: hidden;
   box-shadow: var(--shadow-sm);
   animation: sig-in 0.34s cubic-bezier(0.2, 0.9, 0.3, 1);
