@@ -169,7 +169,7 @@ function Shell() {
           {topicId ? (
             <TopicPage key={topicId} topicId={topicId} sub={sub} live={live} />
           ) : section === "/" && path === "/" ? (
-            <Overview events={events} live={live} />
+            <Overview events={events} live={live} spaceId={current?.id ?? null} />
           ) : section === "/me" ? (
             <MyWork live={live} />
           ) : section === "/topics" ? (
