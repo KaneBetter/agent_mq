@@ -53,6 +53,7 @@ export interface Project {
   id: string;
   name: string;
   description: string;
+  tags: string[];
   task_schema: Record<string, unknown> | null;
   created_at: string;
 }
@@ -95,6 +96,7 @@ export interface Task {
   id: string;
   project_id: string;
   type: string;
+  tags: string[];
   payload: Record<string, unknown>;
   priority: number;
   required_capabilities: string[];
@@ -107,6 +109,8 @@ export interface Task {
   claimed_at: string | null;
   lease_expires_at: string | null;
   visible_after: string | null;
+  /** When set and in the future, the task is scheduled and not claimable until then. */
+  scheduled_for: string | null;
   dedup_key: string | null;
   last_error: string | null;
   created_at: string;
@@ -152,6 +156,9 @@ export interface RegisterAgentRequest {
   capabilities?: string[];
   machine_info?: Record<string, unknown>;
   max_concurrency?: number;
+  /** When set, the server also subscribes the new agent to this project in one step. */
+  project_id?: string;
+  group_name?: string;
 }
 export interface RegisterAgentResponse {
   agent_id: string;
@@ -213,6 +220,7 @@ export interface CreateProjectRequest {
   name: string;
   description?: string;
   task_schema?: Record<string, unknown>;
+  tags?: string[];
   /** Optional default group name; defaults to "default". */
   default_group?: string;
 }
@@ -231,12 +239,15 @@ export interface CreateTaskTypeRequest {
 export interface PublishTaskRequest {
   project_id: string;
   type: string;
+  tags?: string[];
   payload?: Record<string, unknown>;
   priority?: number;
   required_capabilities?: string[];
   target_group_id?: string | null;
   max_retries?: number;
   dedup_key?: string;
+  /** ISO timestamp; when in the future the task is scheduled (claimable only after). */
+  scheduled_for?: string | null;
 }
 
 // ── Dashboard DTOs ─────────────────────────────────────────────────────────
@@ -270,6 +281,7 @@ export interface CostBreakdown {
 // ── Live event stream (SSE at GET /api/events) ─────────────────────────────
 export type EventType =
   | "task.published"
+  | "task.scheduled"
   | "task.claimed"
   | "task.running"
   | "task.completed"
@@ -295,6 +307,39 @@ export interface LiveEvent {
   message?: string;
 }
 
+/** A persisted activity record (the durable form of a LiveEvent). */
+export interface ActivityRecord extends LiveEvent {
+  id: string;
+  task_tags?: string[];
+  project_tags?: string[];
+}
+
+// ── Calendar (GET /api/calendar) ───────────────────────────────────────────
+/** A future task shown on the calendar's upcoming days. */
+export interface ScheduledTaskLite {
+  id: string;
+  type: string;
+  tags: string[];
+  project_id: string;
+  project_name: string;
+  status: TaskStatus;
+  scheduled_for: string;
+}
+/** Per-day rollup: past activity counts + future scheduled tasks. */
+export interface CalendarDay {
+  date: string; // YYYY-MM-DD (server local)
+  activity_total: number;
+  completed: number;
+  failed: number;
+  published: number;
+  scheduled: ScheduledTaskLite[];
+}
+export interface CalendarResponse {
+  from: string; // YYYY-MM-DD
+  to: string; // YYYY-MM-DD
+  days: CalendarDay[];
+}
+
 // ── Shared constants ───────────────────────────────────────────────────────
 export const API_ROUTES = {
   register: "/api/agents/register",
@@ -314,6 +359,8 @@ export const API_ROUTES = {
   agent: (id: string) => `/api/agents/${id}`,
   overview: "/api/dashboard/overview",
   costs: "/api/dashboard/costs",
+  activity: "/api/activity",
+  calendar: "/api/calendar",
   events: "/api/events",
   health: "/api/health",
 } as const;
