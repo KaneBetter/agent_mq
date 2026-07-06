@@ -5,7 +5,7 @@ build/
 .env.local
 *.log
 .DS_Store
-.agentctl/
+.agent-mq/
 coverage/
 *.tsbuildinfo
 .gstack/

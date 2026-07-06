@@ -13,7 +13,7 @@
     "dev:server": "pnpm --filter @agentmq/server dev",
     "dev:web": "pnpm --filter @agentmq/web dev",
     "dev": "concurrently -n server,web -c cyan,magenta \"pnpm dev:server\" \"pnpm dev:web\"",
-    "agentctl": "pnpm --filter @agentmq/agent start --",
+    "agent-mq": "pnpm --filter @agentmq/agent start --",
     "demo": "pnpm --filter @agentmq/server demo",
     "setup": "pnpm install && pnpm db:up && node scripts/wait-for-db.mjs && pnpm migrate && pnpm seed"
   },

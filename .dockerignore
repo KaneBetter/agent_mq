@@ -4,6 +4,6 @@ dist
 build
 .git
 .env
-.agentctl
+.agent-mq
 *.log
 .DS_Store

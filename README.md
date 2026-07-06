@@ -2,7 +2,7 @@
 
 A **distributed agent management system** — a Postgres-backed **pull task queue** for running
 work across your teammates' machines. Publish tasks from a web console; workers on colleague
-laptops pull them via a scheduled `agentctl`, run them, and report results + token usage back to
+laptops pull them via a scheduled `agent-mq`, run them, and report results + token usage back to
 a live **dispatch board**.
 
 > Concept map: **Project = Topic · Task = Message · Agent = Consumer · Group = Consumer Group.**
@@ -16,7 +16,7 @@ Three parts:
 |---|---|---|
 | **Server** | Fastify + Postgres control plane: register / subscribe / **claim** / heartbeat / complete / reaper / dashboards / live SSE | `packages/server` |
 | **Web console** | The "dispatch control room" — live board (Pending → Running → Done), Fleet, Projects, Queue, Publish | `packages/web` |
-| **agentctl** | The worker CLI colleagues run (pull model, handler plugins, mock LLM handlers for zero-key demo) | `packages/agent` |
+| **agent-mq** | The worker CLI colleagues run (pull model, handler plugins, mock LLM handlers for zero-key demo) | `packages/agent` |
 
 The heart is one SQL statement — an atomic `FOR UPDATE OF t SKIP LOCKED` claim that gives an
 agent the **oldest** task it is **capable** of running, while it is **under its concurrency
@@ -55,10 +55,10 @@ pnpm seed             # demo projects + task types
 pnpm dev              # server :4000 + web :5173
 
 # in another shell — become a worker (a "colleague machine"):
-pnpm agentctl register  --name mac-01 --owner you --caps shell,gpu,cpu
-pnpm agentctl subscribe --project research
-pnpm agentctl subscribe --project content
-pnpm agentctl run --allow-shell
+pnpm agent-mq register  --name mac-01 --owner you --caps shell,gpu,cpu
+pnpm agent-mq subscribe --project research
+pnpm agent-mq subscribe --project content
+pnpm agent-mq run --allow-shell
 
 # in another shell — stream demo work onto the board:
 pnpm demo
@@ -88,7 +88,7 @@ head), a **dead-letter** state for tasks past `max_retries`, and `dedup_key` ide
 packages/shared   shared TypeScript contract (types + API routes)
 packages/server   Fastify API, claim, reaper, SSE, migrate, seed, demo
 packages/web      React + Vite dispatch console
-packages/agent    agentctl worker CLI + handler plugins + SKILL.md
+packages/agent    agent-mq worker CLI + handler plugins + SKILL.md
 db/schema.sql     the schema
 docs/             the original design docs
 BUILD-CONTRACT.md the spec every part is built against
