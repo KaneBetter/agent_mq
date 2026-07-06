@@ -31,9 +31,9 @@ export function Fleet({ live }: { live: boolean }) {
             <div className="big">▤</div>
             No consumers yet. Register one — or grab the connect prompt from Broker:
             <div className="code-preview" style={{ marginTop: 14, textAlign: "left" }}>
-              pnpm agentctl register --name mac-01 --owner you --caps shell,gpu --project research{"\n"}
-              pnpm agentctl schedule install --interval 60 --project research{"\n"}
-              pnpm agentctl run
+              pnpm agent-mq register --name mac-01 --owner you --caps shell,gpu --project research{"\n"}
+              pnpm agent-mq schedule install --interval 60 --project research{"\n"}
+              pnpm agent-mq run
             </div>
           </div>
         ) : (
@@ -141,7 +141,7 @@ export function Fleet({ live }: { live: boolean }) {
           <div className="section-label">Poll schedules</div>
           {(schedules.data ?? []).length === 0 ? (
             <div className="muted mono" style={{ fontSize: 12, marginBottom: 18 }}>
-              none registered — set up with <span style={{ color: "var(--txt-1)" }}>agentctl schedule install</span>
+              none registered — set up with <span style={{ color: "var(--txt-1)" }}>agent-mq schedule install</span>
             </div>
           ) : (
             <div className="tbl-wrap" style={{ marginBottom: 18 }}>

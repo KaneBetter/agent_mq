@@ -50,13 +50,13 @@ export function RegisterAgentModal({ project, onClose, onRegistered }: Props) {
   }
 
   const runCmd =
-    `pnpm agentctl register --name "${name || "my-machine"}"` +
+    `pnpm agent-mq register --name "${name || "my-machine"}"` +
     (owner ? ` --owner "${owner}"` : "") +
     ` --caps ${caps || "cpu"}` +
     (project ? ` --project ${project.name}` : "") +
     ` --server ${API_BASE}` +
-    (project ? `\npnpm agentctl schedule install --interval 60 --project ${project.name}` : "") +
-    `\npnpm agentctl run`;
+    (project ? `\npnpm agent-mq schedule install --interval 60 --project ${project.name}` : "") +
+    `\npnpm agent-mq run`;
 
   return (
     <Modal

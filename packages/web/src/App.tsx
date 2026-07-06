@@ -4,10 +4,11 @@ import { useClock, useEventStream, usePoll } from "./hooks";
 import { clockTime } from "./format";
 import { Link, RouterProvider, useRouter } from "./router";
 import { ModalProvider, useModals } from "./modals";
+import { AuthProvider, useAuth } from "./auth";
+import { AuthGate } from "./views/AuthGate";
 import { Overview } from "./views/Overview";
 import { Fleet } from "./views/Fleet";
 import { Projects } from "./views/Projects";
-import { ProjectDetail } from "./views/ProjectDetail";
 import { Queue } from "./views/Queue";
 import { Publish } from "./views/Publish";
 import { Activity } from "./views/Activity";
@@ -37,6 +38,23 @@ const TITLES: Record<string, { title: string; crumb: string }> = {
 
 export function App() {
   return (
+    <AuthProvider>
+      <Gate />
+    </AuthProvider>
+  );
+}
+
+function Gate() {
+  const { user, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="auth-screen">
+        <span className="spinner" />
+      </div>
+    );
+  }
+  if (!user) return <AuthGate />;
+  return (
     <RouterProvider>
       <ModalProvider>
         <Shell />
@@ -48,6 +66,7 @@ export function App() {
 function Shell() {
   const { path } = useRouter();
   const { openRegister } = useModals();
+  const { user, logout } = useAuth();
   const [live, setLive] = useState(true);
   const now = useClock();
   const { events, conn } = useEventStream(!live);
@@ -57,7 +76,7 @@ function Shell() {
   const topicMatch = path.match(/^\/topics\/([^/]+)$/);
   const topicId = topicMatch ? decodeURIComponent(topicMatch[1]) : null;
   const section = path === "/" ? "/" : `/${path.split("/")[1]}`;
-  const meta = topicId ? { title: "Topic", crumb: "stream / drill-in" } : TITLES[section] ?? TITLES["/"];
+  const meta = TITLES[section] ?? TITLES["/"];
 
   return (
     <div className="app">
@@ -97,6 +116,15 @@ function Shell() {
             bus {conn}
           </div>
           <div style={{ marginTop: 4 }}>{k ? `${k.tasks_completed} acked · ${k.tasks_dead} dead` : "—"}</div>
+          {user && (
+            <div className="user-chip">
+              <div className="avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</div>
+              <div className="uname">{user.display_name || user.username}</div>
+              <span className="ulogout" onClick={() => logout()} title="Sign out">
+                sign out
+              </span>
+            </div>
+          )}
         </div>
       </aside>
 
@@ -114,12 +142,10 @@ function Shell() {
         </header>
 
         <div className="content">
-          {topicId ? (
-            <ProjectDetail key={topicId} projectId={topicId} live={live} />
-          ) : section === "/" && path === "/" ? (
+          {section === "/" && path === "/" ? (
             <Overview events={events} live={live} />
           ) : section === "/topics" ? (
-            <Projects live={live} />
+            <Projects live={live} topicId={topicId} />
           ) : section === "/queue" ? (
             <Queue live={live} />
           ) : section === "/produce" ? (

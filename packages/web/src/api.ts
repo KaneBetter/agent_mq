@@ -1,14 +1,20 @@
 import type {
   ActivityRecord,
+  AddMemberRequest,
   AgentSchedule,
   AgentSummary,
+  AuthResponse,
   CalendarResponse,
   CostBreakdown,
   CreateProjectRequest,
+  CreateRestWindowRequest,
   CreateScheduleRequest,
+  CreateSpaceRequest,
   CreateTaskTypeRequest,
   EventType,
   Group,
+  LoginRequest,
+  MyOverview,
   OnboardingInfo,
   OverviewKPIs,
   Project,
@@ -17,21 +23,32 @@ import type {
   PublishTaskRequest,
   RegisterAgentRequest,
   RegisterAgentResponse,
+  RegisterUserRequest,
+  RestWindow,
   Schedule,
+  SpaceDetail,
+  SpaceSummary,
   Task,
   TaskDetail,
   TaskStatus,
   TaskType,
   UpdateScheduleRequest,
+  UpdateSpaceRequest,
 } from "@agentmq/shared";
 import { API_ROUTES } from "@agentmq/shared";
 
 export const API_BASE =
   import.meta.env.VITE_API_BASE?.replace(/\/$/, "") ?? "http://localhost:4000";
 
+// NOTE: keep this false until the v5 server's CORS sends Access-Control-Allow-Credentials.
+// Flipping it before then breaks every request (credentialed CORS needs that header).
+// Integration step flips it to true.
+const WITH_CREDENTIALS = true;
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
+    ...(WITH_CREDENTIALS ? { credentials: "include" as RequestCredentials } : {}),
     ...init,
   });
   if (!res.ok) {
@@ -134,4 +151,51 @@ export const api = {
     req<Task>(API_ROUTES.tasks, { method: "POST", body: JSON.stringify(body) }),
   requeue: (id: string) => req<Task>(API_ROUTES.requeue(id), { method: "POST" }),
   cancel: (id: string) => req<Task>(API_ROUTES.cancel(id), { method: "POST" }),
+
+  // ── v5: auth ──────────────────────────────────────────────────────────────
+  register: (body: RegisterUserRequest) =>
+    req<AuthResponse>(API_ROUTES.authRegister, { method: "POST", body: JSON.stringify(body) }),
+  login: (body: LoginRequest) =>
+    req<AuthResponse>(API_ROUTES.authLogin, { method: "POST", body: JSON.stringify(body) }),
+  logout: () => req<{ ok: boolean }>(API_ROUTES.authLogout, { method: "POST" }),
+  me: () => req<AuthResponse>(API_ROUTES.authMe),
+  myOverview: () => req<MyOverview>(API_ROUTES.myOverview),
+
+  // ── v5: spaces + members ──────────────────────────────────────────────────
+  spaces: () => req<SpaceSummary[]>(API_ROUTES.spaces),
+  space: (id: string) => req<SpaceDetail>(API_ROUTES.space(id)),
+  createSpace: (body: CreateSpaceRequest) =>
+    req<SpaceDetail>(API_ROUTES.spaces, { method: "POST", body: JSON.stringify(body) }),
+  updateSpace: (id: string, body: UpdateSpaceRequest) =>
+    req<SpaceDetail>(API_ROUTES.space(id), { method: "PATCH", body: JSON.stringify(body) }),
+  deleteSpace: (id: string) => req<void>(API_ROUTES.space(id), { method: "DELETE" }),
+  addMember: (id: string, body: AddMemberRequest) =>
+    req<SpaceDetail>(API_ROUTES.spaceMembers(id), { method: "POST", body: JSON.stringify(body) }),
+  removeMember: (id: string, userId: string) =>
+    req<void>(API_ROUTES.spaceMember(id, userId), { method: "DELETE" }),
+  setMemberRole: (id: string, userId: string, role: string) =>
+    req<SpaceDetail>(API_ROUTES.spaceMember(id, userId), { method: "PATCH", body: JSON.stringify({ role }) }),
+
+  // ── v5: agent rest / pause ────────────────────────────────────────────────
+  pauseAgent: (id: string, paused: boolean) =>
+    req<AgentSummary>(API_ROUTES.agentPause(id), { method: "POST", body: JSON.stringify({ paused }) }),
+  restWindows: (id: string) => req<RestWindow[]>(API_ROUTES.agentRestWindows(id)),
+  addRestWindow: (id: string, body: CreateRestWindowRequest) =>
+    req<RestWindow>(API_ROUTES.agentRestWindows(id), { method: "POST", body: JSON.stringify(body) }),
+  removeRestWindow: (id: string, windowId: string) =>
+    req<void>(API_ROUTES.agentRestWindow(id, windowId), { method: "DELETE" }),
+  pauseSubscription: (agentId: string, projectId: string, paused: boolean) =>
+    req<{ ok: boolean }>(API_ROUTES.subscriptionPause(agentId), {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, paused }),
+    }),
+
+  // ── v5: stop / reassign ───────────────────────────────────────────────────
+  stopTask: (id: string, assignTo?: string | null) =>
+    req<Task>(API_ROUTES.taskStop(id), {
+      method: "POST",
+      body: JSON.stringify({ assign_to_agent_id: assignTo ?? null }),
+    }),
+  reassignTask: (id: string, agentId: string) =>
+    req<Task>(API_ROUTES.taskReassign(id), { method: "POST", body: JSON.stringify({ agent_id: agentId }) }),
 };
