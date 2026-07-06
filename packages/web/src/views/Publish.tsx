@@ -15,11 +15,11 @@ const SAMPLE: Record<string, string> = {
   sleep: '{\n  "ms": 2500\n}',
 };
 
-export function Publish() {
+export function Publish({ fixedProject }: { fixedProject?: { id: string; name: string } } = {}) {
   const projects = usePoll(() => api.projects(), [], 0);
   const types = usePoll(() => api.taskTypes(), [], 0);
 
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useState(fixedProject?.id ?? "");
   const [type, setType] = useState("");
   const [payload, setPayload] = useState("{\n  \n}");
   const [priority, setPriority] = useState(0);
@@ -99,17 +99,19 @@ export function Publish() {
     <div className="grid-2">
       <Panel title="Produce message" tag="→ enqueue" bodyStyle={{ padding: 18 }}>
         <form onSubmit={submit}>
-          <label className="fld">
-            <span>topic</span>
-            <select className="select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">select topic…</option>
-              {(projects.data ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          {!fixedProject && (
+            <label className="fld">
+              <span>topic</span>
+              <select className="select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                <option value="">select topic…</option>
+                {(projects.data ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           <label className="fld">
             <span>message type</span>

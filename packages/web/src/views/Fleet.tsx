@@ -4,8 +4,10 @@ import { usePoll } from "../hooks";
 import { ago, compactNum, duration, shortId, usd } from "../format";
 import { AgentPill, Bar, Caps, Drawer, Panel, StatusPill } from "../components/ui";
 
-export function Fleet({ live }: { live: boolean }) {
-  const { data: agents, error } = usePoll(() => api.agents(), [], live ? 2500 : 8000);
+export function Fleet({ live, spaceId }: { live: boolean; spaceId?: string | null }) {
+  const { data: allAgents, error } = usePoll(() => api.agents(), [], live ? 2500 : 8000);
+  // Lenient: show consumers in this space, plus legacy ones with no space yet (pre-binding).
+  const agents = spaceId ? (allAgents ?? []).filter((a) => !a.space_id || a.space_id === spaceId) : allAgents;
   const [openId, setOpenId] = useState<string | null>(null);
   const detail = usePoll(
     () => (openId ? api.agent(openId) : Promise.resolve(null)),
