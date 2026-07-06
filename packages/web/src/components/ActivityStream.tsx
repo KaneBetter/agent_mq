@@ -12,7 +12,7 @@ function renderMsg(e: LiveEvent) {
 
   switch (e.type) {
     case "task.published":
-      return <>{task} published to <span style={{ color: "var(--cyan)" }}>{e.project_name}</span></>;
+      return <>{task} published to <span style={{ color: "var(--teal)" }}>{e.project_name}</span></>;
     case "task.claimed":
       return <>{agent} claimed {task}</>;
     case "task.running":

@@ -1,13 +1,18 @@
 import type {
+  ActivityRecord,
   AgentSummary,
+  CalendarResponse,
   CostBreakdown,
   CreateProjectRequest,
   CreateTaskTypeRequest,
+  EventType,
   Group,
   OverviewKPIs,
   Project,
   ProjectSummary,
   PublishTaskRequest,
+  RegisterAgentRequest,
+  RegisterAgentResponse,
   Task,
   TaskDetail,
   TaskStatus,
@@ -57,19 +62,45 @@ export const api = {
   createTaskType: (body: CreateTaskTypeRequest) =>
     req<TaskType>(API_ROUTES.taskTypes, { method: "POST", body: JSON.stringify(body) }),
 
+  registerAgent: (body: RegisterAgentRequest) =>
+    req<RegisterAgentResponse>(API_ROUTES.register, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   tasks: (params: {
     status?: TaskStatus | "";
     project_id?: string;
     type?: string;
+    tag?: string;
     limit?: number;
   } = {}) => {
     const q = new URLSearchParams();
     if (params.status) q.set("status", params.status);
     if (params.project_id) q.set("project_id", params.project_id);
     if (params.type) q.set("type", params.type);
+    if (params.tag) q.set("tag", params.tag);
     if (params.limit) q.set("limit", String(params.limit));
     const qs = q.toString();
     return req<TaskDetail[]>(`${API_ROUTES.tasks}${qs ? `?${qs}` : ""}`);
+  },
+
+  activity: (params: { project_id?: string; type?: EventType | ""; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.project_id) q.set("project_id", params.project_id);
+    if (params.type) q.set("type", params.type);
+    if (params.limit) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return req<ActivityRecord[]>(`${API_ROUTES.activity}${qs ? `?${qs}` : ""}`);
+  },
+
+  calendar: (params: { project_id?: string; from?: string; to?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.project_id) q.set("project_id", params.project_id);
+    if (params.from) q.set("from", params.from);
+    if (params.to) q.set("to", params.to);
+    const qs = q.toString();
+    return req<CalendarResponse>(`${API_ROUTES.calendar}${qs ? `?${qs}` : ""}`);
   },
   task: (id: string) => req<TaskDetail>(API_ROUTES.task(id)),
   publish: (body: PublishTaskRequest) =>

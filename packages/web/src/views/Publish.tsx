@@ -25,6 +25,8 @@ export function Publish() {
   const [priority, setPriority] = useState(0);
   const [count, setCount] = useState(1);
   const [caps, setCaps] = useState("");
+  const [tags, setTags] = useState("");
+  const [scheduledFor, setScheduledFor] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -46,13 +48,18 @@ export function Publish() {
   const effectiveCaps = caps
     ? caps.split(",").map((s) => s.trim()).filter(Boolean)
     : typeMeta?.required_capabilities ?? [];
+  const effectiveTags = tags.split(",").map((s) => s.trim()).filter(Boolean);
+  const scheduledIso = scheduledFor ? new Date(scheduledFor).toISOString() : null;
+  const isFuture = scheduledIso ? new Date(scheduledIso).getTime() > Date.now() : false;
 
   const preview: PublishTaskRequest = {
     project_id: projectId || "<project>",
     type: type || "<type>",
     payload: payloadValid ? JSON.parse(payload || "{}") : {},
     priority,
+    ...(effectiveTags.length ? { tags: effectiveTags } : {}),
     ...(effectiveCaps.length ? { required_capabilities: effectiveCaps } : {}),
+    ...(scheduledIso ? { scheduled_for: scheduledIso } : {}),
   };
 
   function pickType(v: string) {
@@ -74,10 +81,13 @@ export function Publish() {
           type,
           payload: n > 1 ? { ...body, seq: i + 1 } : body,
           priority,
+          ...(effectiveTags.length ? { tags: effectiveTags } : {}),
           ...(effectiveCaps.length ? { required_capabilities: effectiveCaps } : {}),
+          ...(scheduledIso ? { scheduled_for: scheduledIso } : {}),
         });
       }
-      setMsg({ ok: true, text: `dispatched ${n} task${n > 1 ? "s" : ""} → queue tail` });
+      const dest = isFuture ? "scheduled" : "queue tail";
+      setMsg({ ok: true, text: `dispatched ${n} task${n > 1 ? "s" : ""} → ${dest}` });
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -121,10 +131,10 @@ export function Publish() {
               value={payload}
               onChange={(e) => setPayload(e.target.value)}
               spellCheck={false}
-              style={!payloadValid ? { borderColor: "var(--coral)" } : undefined}
+              style={!payloadValid ? { borderColor: "var(--rose)" } : undefined}
             />
             {!payloadValid && (
-              <span className="mono" style={{ color: "var(--coral-2)", fontSize: 10.5 }}>
+              <span className="mono" style={{ color: "var(--rose-2)", fontSize: 10.5 }}>
                 invalid JSON
               </span>
             )}
@@ -154,6 +164,31 @@ export function Publish() {
           </div>
 
           <label className="fld">
+            <span>tags (comma-sep, optional)</span>
+            <input
+              className="input"
+              placeholder="urgent, batch-3, experiment"
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+            />
+          </label>
+
+          <label className="fld">
+            <span>schedule for (optional — leave blank to run now)</span>
+            <input
+              className="input"
+              type="datetime-local"
+              value={scheduledFor}
+              onChange={(e) => setScheduledFor(e.target.value)}
+            />
+            {scheduledFor && (
+              <span className="mono" style={{ fontSize: 10.5, color: isFuture ? "var(--scheduled)" : "var(--rose-2)" }}>
+                {isFuture ? "◷ will be claimable only after this time" : "time is in the past — will run immediately"}
+              </span>
+            )}
+          </label>
+
+          <label className="fld">
             <span>override required capabilities (optional)</span>
             <input
               className="input"
@@ -164,7 +199,7 @@ export function Publish() {
           </label>
 
           <button className="btn primary" disabled={busy || !projectId || !type || !payloadValid}>
-            {busy ? "Dispatching…" : count > 1 ? `Dispatch ${count} tasks` : "Dispatch task"}
+            {busy ? "Dispatching…" : isFuture ? `Schedule ${count > 1 ? count + " tasks" : "task"}` : count > 1 ? `Dispatch ${count} tasks` : "Dispatch task"}
           </button>
           {msg && (
             <div
@@ -172,7 +207,7 @@ export function Publish() {
               style={{
                 marginTop: 14,
                 fontSize: 12,
-                color: msg.ok ? "var(--cyan-2)" : "var(--coral-2)",
+                color: msg.ok ? "var(--teal-2)" : "var(--rose-2)",
               }}
             >
               {msg.ok ? "✓ " : "✗ "}

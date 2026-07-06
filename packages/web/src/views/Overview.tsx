@@ -21,7 +21,7 @@ export function Overview({ events, live }: { events: LiveEvent[]; live: boolean 
           label="Agents online"
           value={k ? `${k.agents_online}` : "—"}
           sub={k ? `of ${k.agents_total} registered` : ""}
-          accent="var(--cyan)"
+          accent="var(--teal)"
         />
         <Kpi
           label="Pending"
@@ -103,8 +103,8 @@ export function Overview({ events, live }: { events: LiveEvent[]; live: boolean 
                     width: 8,
                     height: 8,
                     borderRadius: "50%",
-                    background: a.status === "online" ? "var(--cyan)" : "var(--txt-3)",
-                    boxShadow: a.status === "online" ? "0 0 8px 0 var(--cyan)" : "none",
+                    background: a.status === "online" ? "var(--teal)" : "var(--txt-3)",
+                    boxShadow: a.status === "online" ? "0 0 8px 0 var(--teal)" : "none",
                     flex: "none",
                   }}
                 />

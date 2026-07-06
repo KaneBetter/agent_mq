@@ -1,11 +1,15 @@
 import type { AgentSummary, TaskDetail } from "@agentmq/shared";
-import { ago, shortId } from "../format";
+import { ago, hm, shortId } from "../format";
 
-function Signal({ t, running }: { t: TaskDetail; running?: boolean }) {
+function isScheduledFuture(t: TaskDetail, nowMs: number): boolean {
+  return !!t.scheduled_for && new Date(t.scheduled_for).getTime() > nowMs;
+}
+
+function Signal({ t, running, scheduled }: { t: TaskDetail; running?: boolean; scheduled?: boolean }) {
   return (
     <div
-      className={`sig${running ? " running" : ""}`}
-      style={{ ["--sig" as string]: `var(--${t.status.toLowerCase()})` }}
+      className={`sig${running ? " running" : ""}${scheduled ? " scheduled" : ""}`}
+      style={{ ["--sig" as string]: scheduled ? "var(--scheduled)" : `var(--${t.status.toLowerCase()})` }}
       title={`${t.type} · ${t.status}`}
     >
       <div className="sig-top">
@@ -15,8 +19,15 @@ function Signal({ t, running }: { t: TaskDetail; running?: boolean }) {
       <div className="sig-meta">
         <span className="sig-proj">{t.project_name}</span>
         <span>·</span>
-        <span>{t.retry_count > 0 ? `retry ${t.retry_count}` : ago(t.created_at)}</span>
+        {scheduled ? (
+          <span style={{ color: "var(--scheduled)" }}>◷ {hm(t.scheduled_for)}</span>
+        ) : (
+          <span>{t.retry_count > 0 ? `retry ${t.retry_count}` : ago(t.created_at)}</span>
+        )}
         {t.assigned_agent_name && !running && <span>· {t.assigned_agent_name}</span>}
+        {t.tags.slice(0, 2).map((tag) => (
+          <span key={tag} style={{ color: "var(--violet)" }}>#{tag}</span>
+        ))}
       </div>
       {running && (
         <div className="sig-progress">
@@ -34,16 +45,20 @@ export function DispatchBoard({
   tasks: TaskDetail[];
   agents: AgentSummary[];
 }) {
+  const nowMs = Date.now();
+  // "Ready" pending = PENDING and not scheduled for the future.
   const pending = tasks
-    .filter((t) => t.status === "PENDING")
+    .filter((t) => t.status === "PENDING" && !isScheduledFuture(t, nowMs))
     .sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at));
+  const scheduled = tasks
+    .filter((t) => t.status === "PENDING" && isScheduledFuture(t, nowMs))
+    .sort((a, b) => +new Date(a.scheduled_for!) - +new Date(b.scheduled_for!));
   const active = tasks.filter((t) => t.status === "RUNNING" || t.status === "CLAIMED");
   const recent = tasks
     .filter((t) => t.status === "COMPLETED" || t.status === "FAILED" || t.status === "DEAD")
     .sort((a, b) => +new Date(b.completed_at ?? b.created_at) - +new Date(a.completed_at ?? a.created_at))
     .slice(0, 40);
 
-  // Group active tasks into per-agent lanes.
   const laneMap = new Map<string, TaskDetail[]>();
   for (const t of active) {
     const key = t.assigned_agent_id ?? "unassigned";
@@ -60,10 +75,21 @@ export function DispatchBoard({
           <span className="n">{pending.length}</span>
         </div>
         <div className="board-col-body">
-          {pending.length === 0 && <div className="board-empty">queue empty</div>}
-          {pending.slice(0, 60).map((t) => (
+          {pending.length === 0 && scheduled.length === 0 && <div className="board-empty">queue empty</div>}
+          {pending.slice(0, 50).map((t) => (
             <Signal key={t.id} t={t} />
           ))}
+          {scheduled.length > 0 && (
+            <>
+              <div className="lane-head" style={{ marginTop: 6 }}>
+                <span style={{ color: "var(--scheduled)" }}>◷</span> scheduled · not yet due
+                <span className="cap">{scheduled.length}</span>
+              </div>
+              {scheduled.slice(0, 12).map((t) => (
+                <Signal key={t.id} t={t} scheduled />
+              ))}
+            </>
+          )}
         </div>
       </div>
 
@@ -79,7 +105,7 @@ export function DispatchBoard({
             return (
               <div className="lane" key={agentId}>
                 <div className="lane-head">
-                  <span style={{ color: "var(--cyan)" }}>▪</span>
+                  <span style={{ color: "var(--teal)" }}>▪</span>
                   {agent ? agent.name : "unassigned"}
                   <span className="cap">
                     {lane.length}

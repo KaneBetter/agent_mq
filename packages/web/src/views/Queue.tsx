@@ -3,8 +3,8 @@ import type { TaskStatus } from "@agentmq/shared";
 import { TASK_STATUSES } from "@agentmq/shared";
 import { api } from "../api";
 import { usePoll } from "../hooks";
-import { ago, compactNum, duration, shortId, usd } from "../format";
-import { Drawer, Panel, StatusPill } from "../components/ui";
+import { ago, compactNum, duration, hm, shortId, usd } from "../format";
+import { Drawer, Panel, StatusPill, Tags } from "../components/ui";
 
 export function Queue({ live }: { live: boolean }) {
   const [status, setStatus] = useState<TaskStatus | "">("");
@@ -99,12 +99,22 @@ export function Queue({ live }: { live: boolean }) {
                       <div className="mono" style={{ fontSize: 10, color: "var(--txt-3)" }}>
                         #{shortId(t.id)}
                       </div>
+                      {t.tags.length > 0 && (
+                        <div style={{ marginTop: 4 }}>
+                          <Tags tags={t.tags} />
+                        </div>
+                      )}
                     </td>
                     <td>
-                      <span style={{ color: "var(--cyan)", fontSize: 12 }}>{t.project_name}</span>
+                      <span style={{ color: "var(--teal)", fontSize: 12 }}>{t.project_name}</span>
                     </td>
                     <td>
                       <StatusPill status={t.status} />
+                      {t.scheduled_for && new Date(t.scheduled_for).getTime() > Date.now() && (
+                        <div className="mono" style={{ fontSize: 9.5, color: "var(--scheduled)", marginTop: 3 }}>
+                          ◷ {hm(t.scheduled_for)}
+                        </div>
+                      )}
                     </td>
                     <td className="mono" style={{ fontSize: 11.5 }}>
                       {t.assigned_agent_name ?? <span className="muted">—</span>}
@@ -174,7 +184,7 @@ export function Queue({ live }: { live: boolean }) {
 
           <dl className="kv" style={{ marginBottom: 18 }}>
             <dt>Project</dt>
-            <dd style={{ color: "var(--cyan)" }}>{d.project_name}</dd>
+            <dd style={{ color: "var(--teal)" }}>{d.project_name}</dd>
             <dt>Agent</dt>
             <dd>{d.assigned_agent_name ?? "—"}</dd>
             <dt>Priority</dt>
@@ -185,6 +195,16 @@ export function Queue({ live }: { live: boolean }) {
             </dd>
             <dt>Required caps</dt>
             <dd className="mono">{d.required_capabilities.join(", ") || "any"}</dd>
+            <dt>Tags</dt>
+            <dd>{d.tags.length ? <Tags tags={d.tags} /> : <span className="muted">none</span>}</dd>
+            {d.scheduled_for && (
+              <>
+                <dt>Scheduled for</dt>
+                <dd className="mono" style={{ color: "var(--scheduled)" }}>
+                  {new Date(d.scheduled_for).toLocaleString()}
+                </dd>
+              </>
+            )}
             <dt>Created</dt>
             <dd className="mono" style={{ fontSize: 11 }}>
               {ago(d.created_at)}
@@ -200,7 +220,7 @@ export function Queue({ live }: { live: boolean }) {
             {d.last_error && (
               <>
                 <dt>Last error</dt>
-                <dd style={{ color: "var(--coral-2)" }}>{d.last_error}</dd>
+                <dd style={{ color: "var(--rose-2)" }}>{d.last_error}</dd>
               </>
             )}
           </dl>

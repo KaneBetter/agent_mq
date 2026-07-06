@@ -34,6 +34,58 @@ export function Caps({ caps }: { caps: string[] }) {
   );
 }
 
+export function Tags({
+  tags,
+  onClick,
+  active,
+}: {
+  tags: string[];
+  onClick?: (t: string) => void;
+  active?: string;
+}) {
+  if (!tags || tags.length === 0) return null;
+  return (
+    <span className="chips">
+      {tags.map((t) => (
+        <span
+          key={t}
+          className={`tag-chip${onClick ? " clickable" : ""}${active === t ? " active" : ""}`}
+          onClick={onClick ? () => onClick(t) : undefined}
+        >
+          #{t}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+export function Modal({
+  title,
+  tag,
+  onClose,
+  children,
+}: {
+  title: ReactNode;
+  tag?: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="modal-head">
+          <h2>{title}</h2>
+          {tag && <span className="tag" style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--txt-3)" }}>{tag}</span>}
+          <span className="close-x" onClick={onClose}>
+            ×
+          </span>
+        </div>
+        <div className="modal-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 export function Panel({
   title,
   tag,

@@ -2,9 +2,15 @@ import { useState } from "react";
 import { api } from "../api";
 import { usePoll } from "../hooks";
 import { compactNum } from "../format";
-import { Panel } from "../components/ui";
+import { Panel, Tags } from "../components/ui";
 
-export function Projects({ live }: { live: boolean }) {
+interface ProjectsProps {
+  live: boolean;
+  onRegister: (project: { id: string; name: string }) => void;
+  onFocusProject: (view: "activity" | "calendar", projectId: string) => void;
+}
+
+export function Projects({ live, onRegister, onFocusProject }: ProjectsProps) {
   const projects = usePoll(() => api.projects(), [], live ? 3000 : 8000);
   const types = usePoll(() => api.taskTypes(), [], 0);
   const [busy, setBusy] = useState(false);
@@ -13,6 +19,7 @@ export function Projects({ live }: { live: boolean }) {
   // create project
   const [pName, setPName] = useState("");
   const [pDesc, setPDesc] = useState("");
+  const [pTags, setPTags] = useState("");
   // create task type
   const [tType, setTType] = useState("");
   const [tCaps, setTCaps] = useState("");
@@ -23,9 +30,14 @@ export function Projects({ live }: { live: boolean }) {
     setBusy(true);
     setMsg(null);
     try {
-      await api.createProject({ name: pName.trim(), description: pDesc.trim() });
+      await api.createProject({
+        name: pName.trim(),
+        description: pDesc.trim(),
+        tags: pTags.split(",").map((s) => s.trim()).filter(Boolean),
+      });
       setPName("");
       setPDesc("");
+      setPTags("");
       setMsg(`project "${pName.trim()}" created`);
       projects.refetch();
     } catch (e) {
@@ -43,10 +55,7 @@ export function Projects({ live }: { live: boolean }) {
     try {
       await api.createTaskType({
         type: tType.trim(),
-        required_capabilities: tCaps
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
+        required_capabilities: tCaps.split(",").map((s) => s.trim()).filter(Boolean),
       });
       setTType("");
       setTCaps("");
@@ -79,20 +88,15 @@ export function Projects({ live }: { live: boolean }) {
                     border: "1px solid var(--line)",
                     borderRadius: "var(--radius-lg)",
                     padding: 16,
-                    background: "linear-gradient(160deg,var(--bg-3),var(--bg-1))",
+                    background: "var(--bg-1)",
+                    boxShadow: "var(--shadow-sm)",
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-                    <div
-                      style={{
-                        fontFamily: "var(--font-display)",
-                        fontSize: 16,
-                        fontWeight: 600,
-                        letterSpacing: "0.04em",
-                      }}
-                    >
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontFamily: "var(--font-display)", fontSize: 16, fontWeight: 600, letterSpacing: "0.04em" }}>
                       {p.name}
                     </div>
+                    <Tags tags={p.tags} />
                     <div className="mono muted" style={{ fontSize: 11 }}>
                       {p.description || "—"}
                     </div>
@@ -111,20 +115,10 @@ export function Projects({ live }: { live: boolean }) {
                       ] as const
                     ).map(([label, val, color]) => (
                       <div key={label} style={{ minWidth: 78 }}>
-                        <div
-                          className="mono"
-                          style={{ fontSize: 10, color: "var(--txt-2)", textTransform: "uppercase" }}
-                        >
+                        <div className="mono" style={{ fontSize: 10, color: "var(--txt-2)", textTransform: "uppercase" }}>
                           {label}
                         </div>
-                        <div
-                          style={{
-                            fontFamily: "var(--font-display)",
-                            fontSize: 22,
-                            fontWeight: 700,
-                            color,
-                          }}
-                        >
+                        <div style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700, color }}>
                           {compactNum(val)}
                         </div>
                       </div>
@@ -139,15 +133,22 @@ export function Projects({ live }: { live: boolean }) {
                     </div>
                   </div>
 
-                  {p.groups.length > 0 && (
-                    <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {p.groups.map((g) => (
-                        <span key={g.id} className="chip">
-                          ◇ {g.name}
-                        </span>
-                      ))}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+                    {p.groups.map((g) => (
+                      <span key={g.id} className="chip">◇ {g.name}</span>
+                    ))}
+                    <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                      <button className="btn sm ghost" onClick={() => onFocusProject("activity", p.id)}>
+                        Activity
+                      </button>
+                      <button className="btn sm ghost" onClick={() => onFocusProject("calendar", p.id)}>
+                        Calendar
+                      </button>
+                      <button className="btn sm primary" onClick={() => onRegister({ id: p.id, name: p.name })}>
+                        + Register agent
+                      </button>
                     </div>
-                  )}
+                  </div>
                 </div>
               );
             })}
@@ -160,37 +161,21 @@ export function Projects({ live }: { live: boolean }) {
           <form onSubmit={addType}>
             <label className="fld">
               <span>type name</span>
-              <input
-                className="input"
-                placeholder="e.g. summarize.doc"
-                value={tType}
-                onChange={(e) => setTType(e.target.value)}
-              />
+              <input className="input" placeholder="e.g. summarize.doc" value={tType} onChange={(e) => setTType(e.target.value)} />
             </label>
             <label className="fld">
               <span>required capabilities (comma-sep)</span>
-              <input
-                className="input"
-                placeholder="gpu, shell"
-                value={tCaps}
-                onChange={(e) => setTCaps(e.target.value)}
-              />
+              <input className="input" placeholder="gpu, shell" value={tCaps} onChange={(e) => setTCaps(e.target.value)} />
             </label>
-            <button className="btn primary" disabled={busy || !tType.trim()}>
-              Register type
-            </button>
+            <button className="btn primary" disabled={busy || !tType.trim()}>Register type</button>
           </form>
-          <div className="section-label" style={{ marginTop: 18 }}>
-            Known types
-          </div>
+          <div className="section-label" style={{ marginTop: 18 }}>Known types</div>
           <div className="chips">
             {(types.data ?? []).map((t) => (
               <span key={t.type} className="chip" title={t.required_capabilities.join(", ") || "no caps"}>
                 {t.type}
                 {t.required_capabilities.length > 0 && (
-                  <span style={{ color: "var(--cyan-2)", marginLeft: 6 }}>
-                    {t.required_capabilities.join("·")}
-                  </span>
+                  <span style={{ color: "var(--teal-2)", marginLeft: 6 }}>{t.required_capabilities.join("·")}</span>
                 )}
               </span>
             ))}
@@ -201,30 +186,20 @@ export function Projects({ live }: { live: boolean }) {
           <form onSubmit={addProject}>
             <label className="fld">
               <span>name</span>
-              <input
-                className="input"
-                placeholder="e.g. research"
-                value={pName}
-                onChange={(e) => setPName(e.target.value)}
-              />
+              <input className="input" placeholder="e.g. research" value={pName} onChange={(e) => setPName(e.target.value)} />
             </label>
             <label className="fld">
               <span>description</span>
-              <input
-                className="input"
-                placeholder="what flows through here"
-                value={pDesc}
-                onChange={(e) => setPDesc(e.target.value)}
-              />
+              <input className="input" placeholder="what flows through here" value={pDesc} onChange={(e) => setPDesc(e.target.value)} />
             </label>
-            <button className="btn primary" disabled={busy || !pName.trim()}>
-              Create project
-            </button>
+            <label className="fld">
+              <span>tags (comma-sep)</span>
+              <input className="input" placeholder="llm, research, gpu" value={pTags} onChange={(e) => setPTags(e.target.value)} />
+            </label>
+            <button className="btn primary" disabled={busy || !pName.trim()}>Create project</button>
           </form>
           {msg && (
-            <div className="mono" style={{ marginTop: 14, fontSize: 11.5, color: "var(--cyan-2)" }}>
-              {msg}
-            </div>
+            <div className="mono" style={{ marginTop: 14, fontSize: 11.5, color: "var(--teal-2)" }}>{msg}</div>
           )}
         </Panel>
       </div>

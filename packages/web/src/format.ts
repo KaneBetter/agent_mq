@@ -58,10 +58,12 @@ export function statusColor(s: TaskStatus): string {
 
 /** Color var for an event kind (drives the activity stream dot). */
 export function eventColor(t: EventType): string {
-  if (t.startsWith("agent.")) return "var(--cyan)";
+  if (t.startsWith("agent.")) return "var(--teal)";
   switch (t) {
     case "task.published":
       return "var(--slate)";
+    case "task.scheduled":
+      return "var(--scheduled)";
     case "task.claimed":
       return "var(--claimed)";
     case "task.running":
@@ -81,9 +83,56 @@ export function eventColor(t: EventType): string {
   }
 }
 
+// ── calendar / date helpers ────────────────────────────────────────────────
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+export function monthName(m: number): string {
+  return MONTHS[((m % 12) + 12) % 12];
+}
+
+/** Local YYYY-MM-DD for a Date. */
+export function ymd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+export interface GridDay {
+  date: Date;
+  key: string; // YYYY-MM-DD
+  inMonth: boolean;
+  isToday: boolean;
+}
+
+/** 6x7 month grid starting on Sunday, covering `year`/`month` (0-based month). */
+export function monthGrid(year: number, month: number, todayKey: string): GridDay[] {
+  const first = new Date(year, month, 1);
+  const start = new Date(first);
+  start.setDate(1 - first.getDay()); // back up to Sunday
+  const cells: GridDay[] = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    const key = ymd(d);
+    cells.push({ date: d, key, inMonth: d.getMonth() === month, isToday: key === todayKey });
+  }
+  return cells;
+}
+
+/** Time-of-day HH:MM for an ISO string. */
+export function hm(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
 export function eventVerb(t: EventType): string {
   const map: Record<EventType, string> = {
     "task.published": "published",
+    "task.scheduled": "scheduled",
     "task.claimed": "claimed",
     "task.running": "running",
     "task.completed": "completed",
