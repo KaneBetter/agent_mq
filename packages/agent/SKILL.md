@@ -25,11 +25,24 @@ agentctl heartbeat                   # agent-level "I'm alive"
 agentctl complete <task_id> --status success|failure [--result '<json>'] [--tokens in,out] [--model m]
 agentctl fail <task_id> [--error "msg"]
 agentctl run [--once] [--interval sec] [--concurrency k] [--allow-shell]
+agentctl schedule install --interval <sec> [--project <name>] [--label <l>] [--dry-run]
+agentctl schedule list
 ```
 
 `run` is the real loop: **claim → dispatch a handler by `task.type` → heartbeat while working →
 complete with metrics**. `--once` claims+runs a single task then exits — the model to wire to
 `cron` / `launchd` / Task Scheduler so there is no long-lived process to crash.
+
+`schedule install` is that wiring, done for you: it installs a client-side recurring job
+(a `launchd` plist on macOS, a crontab line on Linux) that runs `agentctl run --once` every
+`--interval` seconds. The server records agent polling schedules for visibility (it upserts
+a daily "site_update" row on register, plus a 60s "project_poll" row per project you
+register/subscribe to) — but the server never triggers anything itself. `schedule install`
+is the executor side of that record: run it once per interval you want honored, on every
+machine that should actually poll. `--dry-run` prints the plist/crontab content and target
+path without writing anything. `schedule list` shows what's currently installed on this
+machine. Every undo command is printed after install — read it before you forget how you
+set this up.
 
 ## Standing orders (discipline)
 
@@ -72,10 +85,20 @@ That is the whole contract. The queue guarantees exactly-one-consumer per task v
 
 ```bash
 export AGENTMQ_SERVER=http://<server-host>:4000
-agentctl register  --name "$(hostname)" --owner you --caps shell,cpu
-agentctl subscribe --project research
-agentctl run                       # or:  agentctl run --once   (from cron)
+agentctl register  --name "$(hostname)" --owner you --caps shell,cpu --project research
+agentctl schedule install --interval 86400                  # daily site-update poll
+agentctl schedule install --interval 60 --project research  # poll research for work
+agentctl run                       # or rely on the installed schedules above
 ```
+
+## Onboarding a brand-new machine (the full prompt)
+
+The canonical, copy-paste-into-an-LLM-agent version of the flow above — including the
+standing-orders discipline (untrusted payloads, stop on lost lease, honest reporting, back
+off when idle) — lives in **[`ONBOARDING.md`](./ONBOARDING.md)**. The server also serves it
+programmatically at `GET /api/onboarding`, with `{{SERVER_URL}}` substituted for the real
+deployment URL. If you're bootstrapping a new worker machine (human or LLM-driven), start
+there instead of re-deriving the steps from this file.
 
 ## Future (secure execution — not on by default)
 

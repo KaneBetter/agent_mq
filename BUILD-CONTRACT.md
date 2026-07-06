@@ -236,3 +236,95 @@ publish a normal task + a scheduled task (`scheduled_for` future) + a tagged tas
 `GET /api/activity` shows rows; `GET /api/calendar` returns day buckets incl. the scheduled task;
 register with `project_id` auto-subscribes (claim then returns a task without a separate subscribe call).
 Paste evidence. Kill the test server after.
+
+---
+
+# v4 delta — project detail, recurring schedules, agent onboarding
+
+Schema already migrated: `tasks.schedule_id`, tables `schedules` and `agent_schedules`.
+Shared types already added: `Recurrence`, `Schedule`, `CreateScheduleRequest`,
+`UpdateScheduleRequest`, `ScheduleOccurrence`, `AgentSchedule`, `ProjectDetail`,
+`OnboardingInfo`, `Task.schedule_id`, EventType `schedule.fired`, and
+`API_ROUTES.{project,schedules,schedule,agentSchedules,onboarding}`. Do NOT re-edit shared/schema.
+
+Design decisions (locked with the user):
+- Onboarding = a copy-paste **prompt** for an LLM agent (not a shell installer).
+- Agent polling schedules are **registered on the server** (visible) but **executed client-side** (cron).
+- Recurring project tasks use **structured recurrence** (interval | weekly days+times), not raw cron.
+
+## Server (packages/server only)
+
+1. **Row mappers**: add `schedule_id` to Task mapping. Add mappers for Schedule + AgentSchedule.
+
+2. **Scheduler ticker** — a new advisory-locked loop (like the reaper; every ~10s). Query
+   `SELECT * FROM schedules WHERE enabled AND next_run_at <= now() FOR UPDATE SKIP LOCKED`.
+   For each due schedule:
+   - Build payload from `payload_template`; if `shift_hours` set, add
+     `shift_start` = the fired slot ISO and `shift_end` = slot + shift_hours.
+   - Insert a task (project_id, type, payload, tags, required_capabilities, target_group_id,
+     `schedule_id`, status PENDING, claimable now). Emit `schedule.fired` + `task.published` (+activity).
+   - Advance: `last_run_at` = fired slot, `next_run_at` = nextRun(recurrence, firedSlot), `runs_count++`.
+   - Catch-up guard: never spawn more than one task per schedule per tick; if next_run is far behind,
+     advance it to the next FUTURE occurrence (skip missed slots) without spawning a flood.
+
+3. **nextRun(recurrence, after: Date): Date** helper (put in `src/scheduling.ts`):
+   - `interval`: `next = after + interval_seconds`; while `next <= now` add interval (cap 10000 iters).
+   - `weekly`: interpret `times` ("HH:MM") in `recurrence.timezone` (default `process.env.TZ || "UTC"`).
+     Find the earliest instant strictly after `after` that lands on a day in `days_of_week` at a time
+     in `times`. Implement a `wallClockToUtc(y, monthIdx, day, hh, mm, tz)` using the Intl offset trick
+     (compute the tz offset at a guessed UTC instant via `Intl.DateTimeFormat(..., {timeZone, ...})`
+     formatToParts, then correct). Iterate up to 14 days out. MUST be correct for tz "UTC" AND a
+     non-UTC IANA tz (test with "Asia/Shanghai"). No new npm deps — use built-in Intl.
+
+4. **agent_schedules auto-create**:
+   - On `POST /api/agents/register`: always upsert a `site_update` row (project_id NULL, interval 86400s)
+     via ON CONFLICT on the partial unique index DO NOTHING; if `project_id` given, also upsert a
+     `project_poll` row (interval 60s) for it (ON CONFLICT (agent_id,project_id,kind) DO NOTHING).
+   - On `POST /api/subscriptions`: upsert a `project_poll` row (interval 60s) for that project.
+   - Set `next_poll_at = now + interval` on create.
+   - Update `last_polled_at`: on `POST /api/agents/heartbeat` bump the agent's `site_update`
+     (last_polled_at=now, next_poll_at=now+interval); on `POST /api/claim` bump all the agent's
+     `project_poll` rows.
+
+5. **Endpoints**:
+   - `GET /api/projects/:id` → `ProjectDetail` = ProjectSummary + `agents` (subscribed AgentSummary[]),
+     `schedules` (Schedule[]), `agent_schedules` (AgentSchedule[] joined names), `recent_tasks`
+     (TaskDetail[], newest 50), `upcoming` (ScheduleOccurrence[]: next ~20 occurrences across the
+     project's enabled schedules via nextRun, sorted by `at`, each with shift_end when shift_hours set).
+   - `GET /api/schedules?project_id=` → Schedule[]. `POST /api/schedules` (CreateScheduleRequest) →
+     Schedule; compute initial `next_run_at = nextRun(recurrence, now)`. `PATCH /api/schedules/:id`
+     (UpdateScheduleRequest: enabled / recurrence / payload_template / tags; recompute next_run_at if
+     recurrence changes). `DELETE /api/schedules/:id`.
+   - `GET /api/agent-schedules?project_id=&agent_id=` → AgentSchedule[] (joined agent_name/project_name).
+   - `GET /api/onboarding` → OnboardingInfo: read `packages/agent/ONBOARDING.md` (resolve via
+     import.meta.url; the agentctl builder creates it), substitute `{{SERVER_URL}}` with the request's
+     origin (or `http://localhost:${SERVER_PORT}`), return `{server_url, install_cmd, prompt}`.
+     `install_cmd` = a one-liner like `git clone <repo> && cd agent_mq && pnpm install` (keep generic).
+
+6. **Seed**: add an `oncall` project (tags `["ops","duty"]`) with task type `oncall.shift` and ONE
+   weekly schedule named "Weekday duty roster": days [1,2,3,4,5], times ["00:00","06:00","12:00","18:00"],
+   shift_hours 6, timezone "UTC", payload_template `{"role":"primary"}`. Idempotent (skip if a schedule
+   with that name already exists in that project).
+
+## agentctl + onboarding prompt (packages/agent only)
+
+1. `agentctl schedule install --interval <sec> [--project <name>] [--label <l>]` — sets up a
+   client-side recurring run on this machine: on macOS write a launchd plist to
+   `~/Library/LaunchAgents/mq.agent.<label>.plist` (and `launchctl load` it) that runs
+   `agentctl run --once`; on Linux append a crontab line. Print exactly what it wrote and how to undo.
+   Also support `agentctl schedule list` (show installed) and `--dry-run` (print, don't write).
+   The server already records the schedule on register/subscribe; this command is the executor side.
+2. `packages/agent/ONBOARDING.md` — THE onboarding prompt ("register is a prompt"). Write it as a
+   self-contained prompt you can paste into an LLM coding agent (Claude Code, etc.). It must:
+   tell the agent it is joining an agent-mq deployment at `{{SERVER_URL}}`; how to get agentctl;
+   `agentctl register --name <machine> --owner <you> --caps <...> --project <project> --server {{SERVER_URL}}`
+   (register auto-subscribes + the server auto-creates its poll schedules); then
+   `agentctl schedule install --interval 86400` (daily site-update poll) and
+   `agentctl schedule install --interval 60 --project <project>` (poll the project for unclaimed tasks);
+   then `agentctl run`. Include the worker discipline (payload untrusted, stop on lost lease, report
+   tokens honestly). Keep `{{SERVER_URL}}` as a literal placeholder — the server substitutes it.
+3. Update `SKILL.md` to mention the new `schedule` command and the onboarding flow.
+
+Verify (both builders): typecheck clean; boot on a NON-4000 port; exercise the new endpoints/commands
+with curl / dry-run and paste evidence. The main thread builds the frontend (project detail page,
+schedule UI, homepage Connect-agent section) in parallel and integrates against the :4000 container.

@@ -97,12 +97,12 @@ export function Publish() {
 
   return (
     <div className="grid-2">
-      <Panel title="Publish task" tag="→ enqueue" bodyStyle={{ padding: 18 }}>
+      <Panel title="Produce message" tag="→ enqueue" bodyStyle={{ padding: 18 }}>
         <form onSubmit={submit}>
           <label className="fld">
-            <span>project</span>
+            <span>topic</span>
             <select className="select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">select project…</option>
+              <option value="">select topic…</option>
               {(projects.data ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -112,7 +112,7 @@ export function Publish() {
           </label>
 
           <label className="fld">
-            <span>task type</span>
+            <span>message type</span>
             <select className="select" value={type} onChange={(e) => pickType(e.target.value)}>
               <option value="">select type…</option>
               {(types.data ?? []).map((t) => (
@@ -199,7 +199,7 @@ export function Publish() {
           </label>
 
           <button className="btn primary" disabled={busy || !projectId || !type || !payloadValid}>
-            {busy ? "Dispatching…" : isFuture ? `Schedule ${count > 1 ? count + " tasks" : "task"}` : count > 1 ? `Dispatch ${count} tasks` : "Dispatch task"}
+            {busy ? "Producing…" : isFuture ? `Schedule ${count > 1 ? count + " messages" : "message"}` : count > 1 ? `Produce ${count} messages` : "Produce message"}
           </button>
           {msg && (
             <div
@@ -221,18 +221,18 @@ export function Publish() {
         <Panel title="Payload preview" tag="what gets enqueued" bodyStyle={{ padding: 14 }}>
           <pre className="code-preview">{JSON.stringify(preview, null, 2)}</pre>
         </Panel>
-        <Panel title="How it will be claimed" tag="routing" bodyStyle={{ padding: 14 }}>
+        <Panel title="How it will be consumed" tag="routing" bodyStyle={{ padding: 14 }}>
           <div className="routing-note">
-            The task enters the <b>tail of its project queue</b>. It is claimed by the{" "}
-            <b>oldest-first (FIFO)</b> rule: the first subscribed machine whose{" "}
+            The message enters the <b>tail of its topic queue</b>. It is consumed by the{" "}
+            <b>priority-then-oldest (FIFO)</b> rule: the first subscribed consumer whose{" "}
             <b>capabilities cover</b> {effectiveCaps.length ? <span className="mono">[{effectiveCaps.join(", ")}]</span> : "its requirements"}{" "}
-            and that is <b>under its concurrency limit</b> picks it up.
+            and that is <b>under its concurrency limit</b> leases it.
             <br />
             <br />
-            No scoring. No reputation. No priority tiers between machines — the reported
+            No scoring. No reputation. No priority tiers between consumers — the reported
             tokens and timings are <b>display-only</b> and never bias who gets the work.
             Postgres <span className="mono">FOR UPDATE SKIP LOCKED</span> guarantees two
-            machines never grab the same task.
+            consumers never grab the same message.
           </div>
         </Panel>
       </div>

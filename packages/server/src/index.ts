@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { env } from "./env.js";
 import { startReaper, stopReaper } from "./reaper.js";
+import { startScheduler, stopScheduler } from "./scheduler.js";
 import { setActivitySink } from "./events.js";
 import { persistActivity } from "./activity.js";
 import { registerAgentRoutes } from "./routes/agents.js";
@@ -18,6 +19,9 @@ import { registerActivityRoutes } from "./routes/activity.js";
 import { registerCalendarRoutes } from "./routes/calendar.js";
 import { registerEventRoutes } from "./routes/events.js";
 import { registerHealthRoutes } from "./routes/health.js";
+import { registerScheduleRoutes } from "./routes/schedules.js";
+import { registerAgentScheduleRoutes } from "./routes/agentSchedules.js";
+import { registerOnboardingRoutes } from "./routes/onboarding.js";
 
 async function main(): Promise<void> {
   const app = Fastify({ logger: true });
@@ -41,6 +45,9 @@ async function main(): Promise<void> {
   registerCalendarRoutes(app);
   registerEventRoutes(app);
   registerHealthRoutes(app);
+  registerScheduleRoutes(app);
+  registerAgentScheduleRoutes(app);
+  registerOnboardingRoutes(app);
 
   app.setNotFoundHandler((request, reply) => {
     reply.code(404).send({ error: `Not found: ${request.method} ${request.url}` });
@@ -52,9 +59,11 @@ async function main(): Promise<void> {
   });
 
   startReaper();
+  startScheduler();
 
   const shutdown = async (): Promise<void> => {
     stopReaper();
+    stopScheduler();
     await app.close();
     process.exit(0);
   };

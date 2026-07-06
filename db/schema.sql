@@ -162,3 +162,55 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 CREATE INDEX IF NOT EXISTS activity_ts_idx      ON activity(ts DESC);
 CREATE INDEX IF NOT EXISTS activity_project_idx ON activity(project_id, ts DESC);
+
+-- ── v4: recurring schedules + agent polling schedules ──────────────────────
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS schedule_id uuid;
+
+-- Recurring task generators (e.g. on-call rosters). A server ticker spawns a
+-- concrete task each time next_run_at arrives, then advances next_run_at.
+CREATE TABLE IF NOT EXISTS schedules (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id            uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name                  text NOT NULL,
+  type                  text NOT NULL,
+  payload_template      jsonb NOT NULL DEFAULT '{}'::jsonb,
+  tags                  text[] NOT NULL DEFAULT '{}',
+  required_capabilities text[] NOT NULL DEFAULT '{}',
+  target_group_id       uuid REFERENCES groups(id) ON DELETE SET NULL,
+  recurrence            jsonb NOT NULL,   -- {kind, interval_seconds?, days_of_week?, times?, timezone?}
+  shift_hours           numeric,          -- duty length; adds shift_start/shift_end to payload
+  enabled               boolean NOT NULL DEFAULT true,
+  next_run_at           timestamptz NOT NULL,
+  last_run_at           timestamptz,
+  runs_count            int NOT NULL DEFAULT 0,
+  created_at            timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS schedules_next_idx ON schedules(next_run_at) WHERE enabled;
+CREATE INDEX IF NOT EXISTS schedules_project_idx ON schedules(project_id);
+
+-- Link generated tasks back to their schedule (nullable FK added after schedules exists).
+DO $$ BEGIN
+  ALTER TABLE tasks ADD CONSTRAINT tasks_schedule_fk
+    FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+CREATE INDEX IF NOT EXISTS tasks_schedule_idx ON tasks(schedule_id) WHERE schedule_id IS NOT NULL;
+
+-- Agent polling schedules: created on register/subscribe, executed client-side
+-- (launchd/cron). The site tracks cadence + last poll for visibility.
+CREATE TABLE IF NOT EXISTS agent_schedules (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id         uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  project_id       uuid REFERENCES projects(id) ON DELETE CASCADE,  -- null = global site-update poll
+  kind             text NOT NULL,          -- 'site_update' | 'project_poll'
+  interval_seconds int NOT NULL,
+  last_polled_at   timestamptz,
+  next_poll_at     timestamptz,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (agent_id, project_id, kind)
+);
+CREATE INDEX IF NOT EXISTS agent_schedules_agent_idx ON agent_schedules(agent_id);
+CREATE INDEX IF NOT EXISTS agent_schedules_project_idx ON agent_schedules(project_id);
+-- One global site-update schedule per agent (project_id is NULL there, so the
+-- table UNIQUE can't enforce it — a partial unique index does).
+CREATE UNIQUE INDEX IF NOT EXISTS agent_schedules_site_uidx
+  ON agent_schedules(agent_id) WHERE kind = 'site_update';

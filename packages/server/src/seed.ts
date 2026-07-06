@@ -1,6 +1,8 @@
 // Idempotent demo data: projects + task types + default groups.
 // Safe to run repeatedly (ON CONFLICT DO NOTHING / upsert semantics throughout).
+import type { Recurrence } from "@agentmq/shared";
 import { pool } from "./db.js";
+import { nextRun } from "./scheduling.js";
 
 interface ProjectSeed {
   name: string;
@@ -65,7 +67,27 @@ const PROJECTS: ProjectSeed[] = [
       },
     ],
   },
+  {
+    name: "oncall",
+    description: "On-call duty roster and shift-driven tasks.",
+    tags: ["ops", "duty"],
+    taskTypes: [
+      {
+        type: "oncall.shift",
+        description: "A scheduled on-call duty shift.",
+        requiredCapabilities: [],
+      },
+    ],
+  },
 ];
+
+const ROSTER_SCHEDULE_NAME = "Weekday duty roster";
+const ROSTER_RECURRENCE: Recurrence = {
+  kind: "weekly",
+  days_of_week: [1, 2, 3, 4, 5],
+  times: ["00:00", "06:00", "12:00", "18:00"],
+  timezone: "UTC",
+};
 
 async function seed(): Promise<void> {
   const client = await pool.connect();
@@ -104,6 +126,36 @@ async function seed(): Promise<void> {
              required_capabilities = EXCLUDED.required_capabilities`,
           [taskType.type, taskType.description, taskType.requiredCapabilities]
         );
+      }
+
+      if (project.name === "oncall") {
+        const existingSchedule = await client.query<{ id: string }>(
+          `SELECT id FROM schedules WHERE project_id = $1 AND name = $2`,
+          [projectId, ROSTER_SCHEDULE_NAME]
+        );
+        if (!existingSchedule.rows[0]) {
+          const nextRunAt = nextRun(ROSTER_RECURRENCE, new Date());
+          await client.query(
+            `INSERT INTO schedules
+               (project_id, name, type, payload_template, tags, required_capabilities,
+                recurrence, shift_hours, enabled, next_run_at)
+             VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8, true, $9)`,
+            [
+              projectId,
+              ROSTER_SCHEDULE_NAME,
+              "oncall.shift",
+              JSON.stringify({ role: "primary" }),
+              [],
+              [],
+              JSON.stringify(ROSTER_RECURRENCE),
+              6,
+              nextRunAt.toISOString(),
+            ]
+          );
+          console.log(`[seed] schedule "${ROSTER_SCHEDULE_NAME}" created for project "oncall"`);
+        } else {
+          console.log(`[seed] schedule "${ROSTER_SCHEDULE_NAME}" already exists, skipping`);
+        }
       }
 
       await client.query("COMMIT");

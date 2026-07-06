@@ -2,61 +2,62 @@ import { useState } from "react";
 import { api } from "./api";
 import { useClock, useEventStream, usePoll } from "./hooks";
 import { clockTime } from "./format";
+import { Link, RouterProvider, useRouter } from "./router";
+import { ModalProvider, useModals } from "./modals";
 import { Overview } from "./views/Overview";
 import { Fleet } from "./views/Fleet";
 import { Projects } from "./views/Projects";
+import { ProjectDetail } from "./views/ProjectDetail";
 import { Queue } from "./views/Queue";
 import { Publish } from "./views/Publish";
 import { Activity } from "./views/Activity";
 import { Calendar } from "./views/Calendar";
-import { RegisterAgentModal } from "./components/RegisterAgentModal";
 
-type ViewId = "overview" | "fleet" | "projects" | "queue" | "publish" | "activity" | "calendar";
-
-const NAV: { id: ViewId; label: string; glyph: string }[] = [
-  { id: "overview", label: "Overview", glyph: "⊞" },
-  { id: "fleet", label: "Fleet", glyph: "▤" },
-  { id: "projects", label: "Projects", glyph: "◈" },
-  { id: "queue", label: "Queue", glyph: "▦" },
-  { id: "publish", label: "Publish", glyph: "⇪" },
-  { id: "activity", label: "Activity", glyph: "≋" },
-  { id: "calendar", label: "Calendar", glyph: "◷" },
+// MQ vocabulary: Broker = control plane, Topic = project, Message = task,
+// Consumer = agent, Consumer Group = group, Producer/Produce = publish.
+const NAV: { to: string; label: string; glyph: string }[] = [
+  { to: "/", label: "Broker", glyph: "⊞" },
+  { to: "/topics", label: "Topics", glyph: "◈" },
+  { to: "/queue", label: "Queue", glyph: "▦" },
+  { to: "/produce", label: "Produce", glyph: "⇪" },
+  { to: "/consumers", label: "Consumers", glyph: "▤" },
+  { to: "/activity", label: "Activity", glyph: "≋" },
+  { to: "/calendar", label: "Calendar", glyph: "◷" },
 ];
 
-const TITLES: Record<ViewId, { title: string; crumb: string }> = {
-  overview: { title: "Overview", crumb: "control-plane / live" },
-  fleet: { title: "Fleet", crumb: "data-plane / consumers" },
-  projects: { title: "Projects", crumb: "topics / groups / tags" },
-  queue: { title: "Queue", crumb: "messages / lease state" },
-  publish: { title: "Publish", crumb: "producer / enqueue" },
-  activity: { title: "Activity", crumb: "persisted event log" },
-  calendar: { title: "Calendar", crumb: "activity / scheduled" },
+const TITLES: Record<string, { title: string; crumb: string }> = {
+  "/": { title: "Broker", crumb: "control plane / live" },
+  "/topics": { title: "Topics", crumb: "message streams" },
+  "/queue": { title: "Queue", crumb: "messages / lease state" },
+  "/produce": { title: "Produce", crumb: "producer / enqueue" },
+  "/consumers": { title: "Consumers", crumb: "the consumer fleet" },
+  "/activity": { title: "Activity", crumb: "persisted event log" },
+  "/calendar": { title: "Calendar", crumb: "activity / scheduled" },
 };
 
 export function App() {
-  const [view, setView] = useState<ViewId>("overview");
+  return (
+    <RouterProvider>
+      <ModalProvider>
+        <Shell />
+      </ModalProvider>
+    </RouterProvider>
+  );
+}
+
+function Shell() {
+  const { path } = useRouter();
+  const { openRegister } = useModals();
   const [live, setLive] = useState(true);
-  const [focusProject, setFocusProject] = useState("");
-  const [registerOpen, setRegisterOpen] = useState(false);
-  const [registerProject, setRegisterProject] = useState<{ id: string; name: string } | null>(null);
   const now = useClock();
   const { events, conn } = useEventStream(!live);
-
   const overview = usePoll(() => api.overview(), [], live ? 3000 : 9000);
   const k = overview.data;
 
-  function navTo(id: ViewId) {
-    setFocusProject("");
-    setView(id);
-  }
-  function openRegister(project: { id: string; name: string } | null) {
-    setRegisterProject(project);
-    setRegisterOpen(true);
-  }
-  function focusProjectView(v: "activity" | "calendar", projectId: string) {
-    setFocusProject(projectId);
-    setView(v);
-  }
+  const topicMatch = path.match(/^\/topics\/([^/]+)$/);
+  const topicId = topicMatch ? decodeURIComponent(topicMatch[1]) : null;
+  const section = path === "/" ? "/" : `/${path.split("/")[1]}`;
+  const meta = topicId ? { title: "Topic", crumb: "stream / drill-in" } : TITLES[section] ?? TITLES["/"];
 
   return (
     <div className="app">
@@ -67,47 +68,44 @@ export function App() {
             <span className="core" />
           </div>
           <div>
-            <div className="brand-name">
-              agent<span>·</span>mq
-            </div>
-            <div className="brand-sub">dispatch</div>
+            <div className="brand-name">agent<span>·</span>mq</div>
+            <div className="brand-sub">broker</div>
           </div>
         </div>
 
-        {NAV.map((n) => (
-          <div key={n.id} className={`nav-item${view === n.id ? " active" : ""}`} onClick={() => navTo(n.id)}>
-            <span className="glyph">{n.glyph}</span>
-            {n.label}
-            {n.id === "queue" && k && k.tasks_pending > 0 && <span className="count">{k.tasks_pending}</span>}
-            {n.id === "fleet" && k && <span className="count">{k.agents_online}</span>}
-          </div>
-        ))}
+        {NAV.map((n) => {
+          const active = n.to === "/" ? path === "/" : section === n.to;
+          return (
+            <Link key={n.to} to={n.to} className={`nav-item${active ? " active" : ""}`}>
+              <span className="glyph">{n.glyph}</span>
+              {n.label}
+              {n.to === "/queue" && k && k.tasks_pending > 0 && <span className="count">{k.tasks_pending}</span>}
+              {n.to === "/consumers" && k && <span className="count">{k.agents_online}</span>}
+            </Link>
+          );
+        })}
 
         <div className="sidebar-foot">
           <div className="conn">
             <span
               style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
+                width: 7, height: 7, borderRadius: "50%",
                 background: conn === "open" ? "var(--teal)" : conn === "connecting" ? "var(--amber)" : "var(--rose)",
                 boxShadow: conn === "open" ? "0 0 8px 0 var(--teal)" : "none",
               }}
             />
             bus {conn}
           </div>
-          <div style={{ marginTop: 4 }}>{k ? `${k.tasks_completed} done · ${k.tasks_dead} dead` : "—"}</div>
+          <div style={{ marginTop: 4 }}>{k ? `${k.tasks_completed} acked · ${k.tasks_dead} dead` : "—"}</div>
         </div>
       </aside>
 
       <main className="main">
         <header className="topbar">
-          <h1>{TITLES[view].title}</h1>
-          <span className="crumb">{TITLES[view].crumb}</span>
+          <h1>{meta.title}</h1>
+          <span className="crumb">{meta.crumb}</span>
           <span className="topbar-spacer" />
-          <button className="btn sm" onClick={() => openRegister(null)}>
-            + Register agent
-          </button>
+          <button className="btn sm" onClick={() => openRegister(null)}>+ Register consumer</button>
           <span className="clock">◷ {clockTime(new Date(now).toISOString())}</span>
           <button className={`live-toggle${live ? " on" : ""}`} onClick={() => setLive((v) => !v)}>
             <span className="dot" />
@@ -116,30 +114,32 @@ export function App() {
         </header>
 
         <div className="content">
-          {view === "overview" && <Overview events={events} live={live} />}
-          {view === "fleet" && <Fleet live={live} />}
-          {view === "projects" && (
-            <Projects live={live} onRegister={openRegister} onFocusProject={focusProjectView} />
+          {topicId ? (
+            <ProjectDetail key={topicId} projectId={topicId} live={live} />
+          ) : section === "/" && path === "/" ? (
+            <Overview events={events} live={live} />
+          ) : section === "/topics" ? (
+            <Projects live={live} />
+          ) : section === "/queue" ? (
+            <Queue live={live} />
+          ) : section === "/produce" ? (
+            <Publish />
+          ) : section === "/consumers" ? (
+            <Fleet live={live} />
+          ) : section === "/activity" ? (
+            <Activity live={live} />
+          ) : section === "/calendar" ? (
+            <Calendar live={live} />
+          ) : (
+            <div className="empty-state"><div className="big">⌕</div>no such page — <Link to="/">go to broker</Link></div>
           )}
-          {view === "queue" && <Queue live={live} />}
-          {view === "publish" && <Publish />}
-          {view === "activity" && <Activity key={`act-${focusProject}`} live={live} initialProject={focusProject} />}
-          {view === "calendar" && <Calendar key={`cal-${focusProject}`} live={live} initialProject={focusProject} />}
         </div>
       </main>
-
-      {registerOpen && (
-        <RegisterAgentModal
-          project={registerProject}
-          onClose={() => setRegisterOpen(false)}
-          onRegistered={() => overview.refetch()}
-        />
-      )}
 
       {conn === "closed" && live && (
         <div className="conn-banner">
           <span className="spinner" />
-          reconnecting to control plane…
+          reconnecting to broker…
         </div>
       )}
     </div>

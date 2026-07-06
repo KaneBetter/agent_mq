@@ -64,7 +64,7 @@ export function Activity({ live, initialProject }: { live: boolean; initialProje
       right={
         <div className="filters">
           <select className="select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">all projects</option>
+            <option value="">all topics</option>
             {(projects.data ?? []).map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}

@@ -3,6 +3,7 @@ import type { ClaimRequest, ClaimResponse } from "@agentmq/shared";
 import { claimTask } from "../claim.js";
 import { requireAgent } from "../auth.js";
 import { emitEvent } from "../events.js";
+import { touchProjectPollSchedules } from "../agentSchedules.js";
 
 export function registerClaimRoutes(app: FastifyInstance): void {
   app.post<{ Body: ClaimRequest }>("/api/claim", async (request, reply) => {
@@ -11,6 +12,9 @@ export function registerClaimRoutes(app: FastifyInstance): void {
 
     try {
       const task = await claimTask(agent);
+      // A claim call is itself a poll of the agent's subscribed projects,
+      // regardless of whether a task was actually found this time.
+      await touchProjectPollSchedules(agent.id);
       if (task) {
         emitEvent({
           type: "task.claimed",

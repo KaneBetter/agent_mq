@@ -10,6 +10,7 @@ import { ApiClient, ApiError } from "./api.js";
 import { getBool, getList, getNumber, getString, parseArgs } from "./args.js";
 import { loadConfig, resolveServer, saveConfig, updateConfig } from "./config.js";
 import { color, fail, info, ok, warn } from "./colors.js";
+import { describeAssumption, installSchedule, listInstalledSchedules } from "./scheduleInstall.js";
 import { runWorker } from "./worker.js";
 
 const HELP = `${color.bold("agentctl")} — agent-mq worker CLI
@@ -25,6 +26,8 @@ ${color.bold("COMMANDS")}
   complete <task_id>    Report a task result
   fail <task_id>        Report a task failure (shortcut for complete --status failure)
   run                   Worker loop: heartbeat -> claim -> dispatch -> complete
+  schedule install      Install a local recurring "run --once" (launchd/cron)
+  schedule list         List installed mq launchd/cron entries on this machine
 
 ${color.bold("GLOBAL FLAGS")}
   --server <url>        Server base URL (else AGENTMQ_SERVER env, else saved config,
@@ -63,11 +66,25 @@ ${color.bold("run")}
   --concurrency <k>      Max concurrent tasks (default = agent's max_concurrency).
   --allow-shell          Enable the shell.command handler (disabled by default).
 
+${color.bold("schedule install")}
+  --interval <sec>       Required. Seconds between runs of \`agentctl run --once\`.
+  --project <name>       Optional. Poll this project (label defaults to project-<name>).
+                          Omit for the daily site-wide poll (label defaults to site-update).
+  --label <l>            Optional. Override the derived label.
+  --dry-run              Print what would be written; write nothing.
+  --server <url>         Baked into the installed command's --server flag.
+
+${color.bold("schedule list")}
+  (no flags — lists installed launchd (macOS) / cron (Linux) mq entries)
+
 ${color.bold("EXAMPLES")}
   agentctl register --name mac-01 --caps shell,gpu --owner alice
   agentctl subscribe --project research
   agentctl run
   agentctl run --once --allow-shell
+  agentctl schedule install --interval 86400
+  agentctl schedule install --interval 60 --project research
+  agentctl schedule list
 `;
 
 function printHelp(): void {
@@ -249,6 +266,67 @@ async function cmdRun(flags: Map<string, string | true>): Promise<void> {
   await runWorker(api, agentId, { once, intervalSec, concurrency, allowShell });
 }
 
+async function cmdScheduleInstall(flags: Map<string, string | true>): Promise<void> {
+  const intervalSec = getNumber(flags, "interval");
+  if (intervalSec === undefined) {
+    fail("--interval <sec> is required");
+    process.exit(1);
+  }
+  const project = getString(flags, "project");
+  const label = getString(flags, "label");
+  const dryRun = getBool(flags, "dry-run");
+  const config = await loadConfig();
+  const server = resolveServer(getString(flags, "server"), config.server);
+
+  const result = await installSchedule({
+    intervalSec,
+    project,
+    label,
+    dryRun,
+    server,
+  });
+
+  info(`platform=${result.platform} label=${color.bold(result.label)}`);
+  info(`command: ${result.command.join(" ")}`);
+  info(`target: ${result.targetPath}`);
+  process.stdout.write(`--- content (${result.targetPath}) ---\n`);
+  process.stdout.write(result.content + "\n");
+
+  if (dryRun) {
+    warn("--dry-run: nothing was written");
+  } else {
+    ok(`installed (${result.written ? "written" : "unchanged"})`);
+  }
+  info(`undo: ${result.undoHint}`);
+  info(await describeAssumption());
+}
+
+async function cmdScheduleList(): Promise<void> {
+  const entries = await listInstalledSchedules();
+  if (entries.length === 0) {
+    info("no mq launchd/cron entries found on this machine");
+    return;
+  }
+  for (const entry of entries) {
+    ok(`[${entry.source}] ${color.bold(entry.label)} — ${entry.detail}`);
+  }
+}
+
+async function cmdSchedule(subcommand: string | undefined, flags: Map<string, string | true>): Promise<void> {
+  switch (subcommand) {
+    case "install":
+      await cmdScheduleInstall(flags);
+      break;
+    case "list":
+      await cmdScheduleList();
+      break;
+    default:
+      fail(`usage: agentctl schedule install --interval <sec> [--project <name>] [--label <l>] [--dry-run]`);
+      fail(`   or: agentctl schedule list`);
+      process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   // pnpm/npm forward a literal "--" separator when script chains are nested
   // (e.g. `pnpm agentctl -- --help` -> `pnpm --filter ... start -- -- help`).
@@ -298,6 +376,9 @@ async function main(): Promise<void> {
       }
       case "run":
         await cmdRun(flags);
+        break;
+      case "schedule":
+        await cmdSchedule(positionals[0], flags);
         break;
       default:
         fail(`unknown command "${command}"`);

@@ -45,7 +45,7 @@ export function Queue({ live }: { live: boolean }) {
     <>
       <Panel
         title="Queue"
-        tag={`${rows.length} tasks`}
+        tag={`${rows.length} messages`}
         right={
           <div className="filters">
             <select className="select" value={status} onChange={(e) => setStatus(e.target.value as TaskStatus | "")}>
@@ -57,7 +57,7 @@ export function Queue({ live }: { live: boolean }) {
               ))}
             </select>
             <select className="select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">all projects</option>
+              <option value="">all topics</option>
               {(projects.data ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -71,17 +71,17 @@ export function Queue({ live }: { live: boolean }) {
         {rows.length === 0 ? (
           <div className="empty-state">
             <div className="big">▦</div>
-            no tasks match — publish some from the Publish tab
+            no messages match — produce some from the Produce tab
           </div>
         ) : (
           <div className="tbl-wrap">
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>Type</th>
-                  <th>Project</th>
+                  <th>Message</th>
+                  <th>Topic</th>
                   <th>Status</th>
-                  <th>Agent</th>
+                  <th>Consumer</th>
                   <th style={{ textAlign: "right" }}>Retries</th>
                   <th style={{ textAlign: "right" }}>Tokens</th>
                   <th style={{ textAlign: "right" }}>Time</th>
@@ -183,9 +183,9 @@ export function Queue({ live }: { live: boolean }) {
           </div>
 
           <dl className="kv" style={{ marginBottom: 18 }}>
-            <dt>Project</dt>
+            <dt>Topic</dt>
             <dd style={{ color: "var(--teal)" }}>{d.project_name}</dd>
-            <dt>Agent</dt>
+            <dt>Consumer</dt>
             <dd>{d.assigned_agent_name ?? "—"}</dd>
             <dt>Priority</dt>
             <dd className="mono">{d.priority}</dd>

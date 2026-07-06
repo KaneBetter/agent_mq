@@ -111,6 +111,8 @@ export interface Task {
   visible_after: string | null;
   /** When set and in the future, the task is scheduled and not claimable until then. */
   scheduled_for: string | null;
+  /** Provenance: the recurring schedule that generated this task, if any. */
+  schedule_id: string | null;
   dedup_key: string | null;
   last_error: string | null;
   created_at: string;
@@ -292,7 +294,8 @@ export type EventType =
   | "agent.registered"
   | "agent.online"
   | "agent.offline"
-  | "reaper.reclaimed";
+  | "reaper.reclaimed"
+  | "schedule.fired";
 
 export interface LiveEvent {
   type: EventType;
@@ -305,6 +308,98 @@ export interface LiveEvent {
   agent_name?: string;
   status?: TaskStatus;
   message?: string;
+}
+
+// ── Recurring schedules (project-level task generators) ────────────────────
+export type RecurrenceKind = "interval" | "weekly";
+export interface Recurrence {
+  kind: RecurrenceKind;
+  /** kind=interval: fire every N seconds. */
+  interval_seconds?: number;
+  /** kind=weekly: 0=Sun .. 6=Sat. */
+  days_of_week?: number[];
+  /** kind=weekly: local "HH:MM" fire times each selected day. */
+  times?: string[];
+  /** IANA timezone the weekly times are interpreted in (default server tz). */
+  timezone?: string;
+}
+
+export interface Schedule {
+  id: string;
+  project_id: string;
+  name: string;
+  type: string;
+  payload_template: Record<string, unknown>;
+  tags: string[];
+  required_capabilities: string[];
+  target_group_id: string | null;
+  recurrence: Recurrence;
+  /** Duty-roster length in hours; when set, generated tasks get shift_start/shift_end. */
+  shift_hours: number | null;
+  enabled: boolean;
+  next_run_at: string;
+  last_run_at: string | null;
+  runs_count: number;
+  created_at: string;
+}
+
+export interface CreateScheduleRequest {
+  project_id: string;
+  name: string;
+  type: string;
+  payload_template?: Record<string, unknown>;
+  tags?: string[];
+  required_capabilities?: string[];
+  target_group_id?: string | null;
+  recurrence: Recurrence;
+  shift_hours?: number | null;
+  enabled?: boolean;
+}
+export interface UpdateScheduleRequest {
+  enabled?: boolean;
+  recurrence?: Recurrence;
+  payload_template?: Record<string, unknown>;
+  tags?: string[];
+}
+
+/** A computed upcoming fire of a schedule (for the calendar / roster view). */
+export interface ScheduleOccurrence {
+  schedule_id: string;
+  schedule_name: string;
+  type: string;
+  at: string; // ISO
+  shift_end: string | null;
+}
+
+// ── Agent polling schedules (registered on server, run client-side) ────────
+export type AgentScheduleKind = "site_update" | "project_poll";
+export interface AgentSchedule {
+  id: string;
+  agent_id: string;
+  agent_name: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  kind: AgentScheduleKind;
+  interval_seconds: number;
+  last_polled_at: string | null;
+  next_poll_at: string | null;
+  created_at: string;
+}
+
+/** Full project drill-in (GET /api/projects/:id). */
+export interface ProjectDetail extends ProjectSummary {
+  agents: AgentSummary[];
+  schedules: Schedule[];
+  agent_schedules: AgentSchedule[];
+  recent_tasks: TaskDetail[];
+  upcoming: ScheduleOccurrence[];
+}
+
+/** Agent onboarding payload for the homepage (GET /api/onboarding). */
+export interface OnboardingInfo {
+  server_url: string;
+  install_cmd: string;
+  prompt: string;
 }
 
 /** A persisted activity record (the durable form of a LiveEvent). */
@@ -349,8 +444,13 @@ export const API_ROUTES = {
   taskHeartbeat: (id: string) => `/api/tasks/${id}/heartbeat`,
   complete: (id: string) => `/api/tasks/${id}/complete`,
   projects: "/api/projects",
+  project: (id: string) => `/api/projects/${id}`,
   groups: "/api/groups",
   taskTypes: "/api/task-types",
+  schedules: "/api/schedules",
+  schedule: (id: string) => `/api/schedules/${id}`,
+  agentSchedules: "/api/agent-schedules",
+  onboarding: "/api/onboarding",
   tasks: "/api/tasks",
   task: (id: string) => `/api/tasks/${id}`,
   requeue: (id: string) => `/api/tasks/${id}/requeue`,

@@ -1,4 +1,28 @@
-import type { EventType, TaskStatus } from "@agentmq/shared";
+import type { EventType, Recurrence, TaskStatus } from "@agentmq/shared";
+
+const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Human-readable one-liner for a recurrence spec. */
+export function recurrenceLabel(r: Recurrence): string {
+  if (r.kind === "interval") {
+    const s = r.interval_seconds ?? 0;
+    if (s % 86400 === 0 && s >= 86400) return `every ${s / 86400}d`;
+    if (s % 3600 === 0 && s >= 3600) return `every ${s / 3600}h`;
+    if (s % 60 === 0 && s >= 60) return `every ${s / 60}m`;
+    return `every ${s}s`;
+  }
+  const days = (r.days_of_week ?? []).slice().sort((a, b) => a - b);
+  const dayStr =
+    days.length === 7
+      ? "daily"
+      : days.join(",") === "1,2,3,4,5"
+        ? "Mon–Fri"
+        : days.join(",") === "0,6"
+          ? "weekends"
+          : days.map((d) => DOW_SHORT[d]).join(" ");
+  const times = (r.times ?? []).join(", ");
+  return `${dayStr} @ ${times}${r.timezone ? ` ${r.timezone}` : ""}`;
+}
 
 export function compactNum(n: number | null | undefined): string {
   if (n == null) return "0";
@@ -56,6 +80,19 @@ export function statusColor(s: TaskStatus): string {
   return `var(--${s.toLowerCase()})`;
 }
 
+/** MQ-vocabulary label for a message (task) status. */
+export function statusLabel(s: TaskStatus): string {
+  const map: Record<TaskStatus, string> = {
+    PENDING: "QUEUED",
+    CLAIMED: "LEASED",
+    RUNNING: "IN-FLIGHT",
+    COMPLETED: "ACKED",
+    FAILED: "NACKED",
+    DEAD: "DEAD-LETTER",
+  };
+  return map[s] ?? s;
+}
+
 /** Color var for an event kind (drives the activity stream dot). */
 export function eventColor(t: EventType): string {
   if (t.startsWith("agent.")) return "var(--teal)";
@@ -78,6 +115,8 @@ export function eventColor(t: EventType): string {
       return "var(--dead)";
     case "reaper.reclaimed":
       return "var(--violet)";
+    case "schedule.fired":
+      return "var(--scheduled)";
     default:
       return "var(--slate)";
   }
@@ -144,6 +183,7 @@ export function eventVerb(t: EventType): string {
     "agent.online": "online",
     "agent.offline": "offline",
     "reaper.reclaimed": "reclaimed",
+    "schedule.fired": "fired",
   };
   return map[t] ?? t;
 }

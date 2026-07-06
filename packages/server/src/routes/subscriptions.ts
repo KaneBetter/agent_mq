@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { Subscription, SubscribeRequest } from "@agentmq/shared";
 import { pool } from "../db.js";
 import { requireAgent } from "../auth.js";
+import { ensureProjectPollSchedule } from "../agentSchedules.js";
 
 interface GroupRow {
   id: string;
@@ -69,6 +70,8 @@ export function registerSubscriptionRoutes(app: FastifyInstance): void {
          RETURNING id, agent_id, project_id, group_id, created_at`,
         [agent.id, projectId, groupId]
       );
+
+      await ensureProjectPollSchedule(client, agent.id, projectId);
 
       await client.query("COMMIT");
 

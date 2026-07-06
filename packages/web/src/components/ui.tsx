@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
 import type { AgentStatus, TaskStatus } from "@agentmq/shared";
+import { statusLabel } from "../format";
 
 export function StatusPill({ status }: { status: TaskStatus }) {
   return (
     <span className={`pill ${status}`}>
       <span className="pd" />
-      {status}
+      {statusLabel(status)}
     </span>
   );
 }

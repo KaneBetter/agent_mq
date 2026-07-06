@@ -50,16 +50,17 @@ export function RegisterAgentModal({ project, onClose, onRegistered }: Props) {
   }
 
   const runCmd =
-    `AGENTMQ_SERVER=${API_BASE} \\\n` +
     `pnpm agentctl register --name "${name || "my-machine"}"` +
     (owner ? ` --owner "${owner}"` : "") +
     ` --caps ${caps || "cpu"}` +
-    (project ? `\npnpm agentctl subscribe --project ${project.name}` : "") +
+    (project ? ` --project ${project.name}` : "") +
+    ` --server ${API_BASE}` +
+    (project ? `\npnpm agentctl schedule install --interval 60 --project ${project.name}` : "") +
     `\npnpm agentctl run`;
 
   return (
     <Modal
-      title={done ? "Agent registered" : "Register agent"}
+      title={done ? "Consumer registered" : "Register consumer"}
       tag={project ? `→ ${project.name}` : "global"}
       onClose={onClose}
     >
@@ -67,7 +68,7 @@ export function RegisterAgentModal({ project, onClose, onRegistered }: Props) {
         <form onSubmit={submit}>
           {project && (
             <div className="routing-note" style={{ marginBottom: 16 }}>
-              This agent will be <b>registered and subscribed to {project.name}</b> in one step,
+              This consumer will be <b>registered and subscribed to {project.name}</b> in one step,
               so it can immediately claim tasks from this project.
             </div>
           )}
@@ -91,7 +92,7 @@ export function RegisterAgentModal({ project, onClose, onRegistered }: Props) {
           </label>
           {error && <div className="mono" style={{ color: "var(--rose-2)", fontSize: 11.5, marginBottom: 12 }}>✗ {error}</div>}
           <button className="btn primary" disabled={busy || !name.trim()}>
-            {busy ? "Registering…" : "Register agent"}
+            {busy ? "Registering…" : "Register consumer"}
           </button>
         </form>
       ) : (
@@ -102,7 +103,7 @@ export function RegisterAgentModal({ project, onClose, onRegistered }: Props) {
             command below to the colleague who runs this machine.
           </div>
 
-          <div className="section-label">agent id</div>
+          <div className="section-label">consumer id</div>
           <div className="token-box" style={{ marginBottom: 12 }}>{done.agent_id}</div>
 
           <div className="section-label">api token (store securely)</div>

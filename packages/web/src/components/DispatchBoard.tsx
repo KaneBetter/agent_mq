@@ -71,7 +71,7 @@ export function DispatchBoard({
     <div className="board">
       <div className="board-col">
         <div className="board-col-head">
-          <span style={{ color: "var(--pending)" }}>◆</span> Pending queue
+          <span style={{ color: "var(--pending)" }}>◆</span> Queued
           <span className="n">{pending.length}</span>
         </div>
         <div className="board-col-body">
@@ -95,11 +95,11 @@ export function DispatchBoard({
 
       <div className="board-col">
         <div className="board-col-head">
-          <span style={{ color: "var(--running)" }}>▶</span> Running · on machines
+          <span style={{ color: "var(--running)" }}>▶</span> In-flight · on consumers
           <span className="n">{active.length}</span>
         </div>
         <div className="board-col-body">
-          {laneMap.size === 0 && <div className="board-empty">no active dispatch</div>}
+          {laneMap.size === 0 && <div className="board-empty">no in-flight messages</div>}
           {[...laneMap.entries()].map(([agentId, lane]) => {
             const agent = agentById.get(agentId);
             return (
@@ -123,11 +123,11 @@ export function DispatchBoard({
 
       <div className="board-col">
         <div className="board-col-head">
-          <span style={{ color: "var(--completed)" }}>●</span> Recently done
+          <span style={{ color: "var(--completed)" }}>●</span> Recently acked
           <span className="n">{recent.length}</span>
         </div>
         <div className="board-col-body">
-          {recent.length === 0 && <div className="board-empty">nothing finished yet</div>}
+          {recent.length === 0 && <div className="board-empty">nothing acked yet</div>}
           {recent.map((t) => (
             <Signal key={t.id + t.status} t={t} />
           ))}

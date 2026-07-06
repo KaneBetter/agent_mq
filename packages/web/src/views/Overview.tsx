@@ -5,6 +5,7 @@ import { compactNum, usd } from "../format";
 import { Kpi, Panel } from "../components/ui";
 import { DispatchBoard } from "../components/DispatchBoard";
 import { ActivityStream } from "../components/ActivityStream";
+import { ConnectAgent } from "../components/ConnectAgent";
 
 export function Overview({ events, live }: { events: LiveEvent[]; live: boolean }) {
   const interval = live ? 1500 : 6000;
@@ -16,27 +17,28 @@ export function Overview({ events, live }: { events: LiveEvent[]; live: boolean 
 
   return (
     <div className="stack">
+      <ConnectAgent />
       <div className="kpi-row">
         <Kpi
-          label="Agents online"
+          label="Consumers online"
           value={k ? `${k.agents_online}` : "—"}
           sub={k ? `of ${k.agents_total} registered` : ""}
           accent="var(--teal)"
         />
         <Kpi
-          label="Pending"
+          label="Queued"
           value={k ? compactNum(k.tasks_pending) : "—"}
-          sub="in queue"
+          sub="awaiting a consumer"
           accent="var(--pending)"
         />
         <Kpi
-          label="Running"
+          label="In-flight"
           value={k ? compactNum(k.tasks_running) : "—"}
-          sub="on machines"
+          sub="on consumers"
           accent="var(--running)"
         />
         <Kpi
-          label="Completed"
+          label="Acked"
           value={k ? compactNum(k.tasks_completed) : "—"}
           sub="all time"
           accent="var(--completed)"
@@ -56,8 +58,8 @@ export function Overview({ events, live }: { events: LiveEvent[]; live: boolean 
       </div>
 
       <Panel
-        title="Dispatch board"
-        tag="PENDING → RUNNING → DONE"
+        title="Message flow"
+        tag="QUEUED → IN-FLIGHT → ACKED"
         right={
           <span className="tag" style={{ color: live ? "var(--amber)" : "var(--txt-3)" }}>
             {live ? "● LIVE" : "○ PAUSED"}
@@ -68,7 +70,7 @@ export function Overview({ events, live }: { events: LiveEvent[]; live: boolean 
         {tasks.error ? (
           <div className="empty-state">
             <div className="big">⚠</div>
-            can't reach the control plane — {tasks.error}
+            can't reach the broker — {tasks.error}
           </div>
         ) : (
           <DispatchBoard tasks={tasks.data ?? []} agents={agents.data ?? []} />
@@ -79,11 +81,11 @@ export function Overview({ events, live }: { events: LiveEvent[]; live: boolean 
         <Panel title="Signal log" tag="live event bus" bodyStyle={{ padding: 0 }}>
           <ActivityStream events={events} />
         </Panel>
-        <Panel title="Fleet snapshot" tag="per machine" bodyStyle={{ padding: "6px 0" }}>
+        <Panel title="Consumer fleet" tag="per consumer" bodyStyle={{ padding: "6px 0" }}>
           <div style={{ maxHeight: 620, overflowY: "auto" }}>
             {(agents.data ?? []).length === 0 && (
               <div className="board-empty" style={{ padding: "30px 0" }}>
-                no agents registered
+                no consumers registered
               </div>
             )}
             {(agents.data ?? []).map((a) => (

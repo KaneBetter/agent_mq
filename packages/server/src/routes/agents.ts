@@ -13,6 +13,11 @@ import { pool, query } from "../db.js";
 import { requireAgent } from "../auth.js";
 import { emitEvent } from "../events.js";
 import { mapTaskDetailRow, TASK_DETAIL_SELECT, type TaskDetailRow } from "../rowMappers.js";
+import {
+  ensureProjectPollSchedule,
+  ensureSiteUpdateSchedule,
+  touchSiteUpdateSchedule,
+} from "../agentSchedules.js";
 
 interface AgentRow {
   id: string;
@@ -83,6 +88,9 @@ export function registerAgentRoutes(app: FastifyInstance): void {
 
       const agent = mapAgentRow(row);
 
+      // Always register the agent's global site-update poll schedule.
+      await ensureSiteUpdateSchedule(client, agent.id);
+
       // Optional register-in-project: upsert the group for this project, then subscribe.
       if (projectId) {
         const projectResult = await client.query<{ id: string }>(
@@ -112,6 +120,8 @@ export function registerAgentRoutes(app: FastifyInstance): void {
            ON CONFLICT (agent_id, project_id, group_id) DO NOTHING`,
           [agent.id, projectId, groupId]
         );
+
+        await ensureProjectPollSchedule(client, agent.id, projectId);
       }
 
       await client.query("COMMIT");
@@ -154,6 +164,7 @@ export function registerAgentRoutes(app: FastifyInstance): void {
         `UPDATE agents SET status = 'online', last_heartbeat_at = now() WHERE id = $1`,
         [agent.id]
       );
+      await touchSiteUpdateSchedule(agent.id);
 
       if (wasOffline) {
         emitEvent({ type: "agent.online", agent_id: agent.id, agent_name: agent.name });

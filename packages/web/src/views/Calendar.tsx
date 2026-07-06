@@ -57,7 +57,7 @@ export function Calendar({ live, initialProject }: { live: boolean; initialProje
         right={
           <div className="filters">
             <select className="select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">all projects</option>
+              <option value="">all topics</option>
               {(projects.data ?? []).map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
@@ -135,7 +135,7 @@ export function Calendar({ live, initialProject }: { live: boolean; initialProje
                 <dt>Published</dt><dd className="mono">{selectedDay.published}</dd>
                 <dt>Failed</dt><dd className="mono" style={{ color: "var(--rose-2)" }}>{selectedDay.failed}</dd>
               </dl>
-              <div className="section-label">Scheduled tasks ({selectedDay.scheduled.length})</div>
+              <div className="section-label">Scheduled messages ({selectedDay.scheduled.length})</div>
               {selectedDay.scheduled.length === 0 ? (
                 <div className="muted mono" style={{ fontSize: 12 }}>none scheduled this day</div>
               ) : (

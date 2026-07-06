@@ -12,10 +12,15 @@ export function Fleet({ live }: { live: boolean }) {
     [openId],
     openId && live ? 2500 : 0
   );
+  const schedules = usePoll(
+    () => (openId ? api.agentSchedules({ agent_id: openId }) : Promise.resolve([])),
+    [openId],
+    openId && live ? 3000 : 0
+  );
 
   return (
     <>
-      <Panel title="Fleet" tag="registered consumers" bodyStyle={{ padding: 0 }}>
+      <Panel title="Consumer fleet" tag="registered consumers" bodyStyle={{ padding: 0 }}>
         {error ? (
           <div className="empty-state">
             <div className="big">⚠</div>
@@ -24,10 +29,10 @@ export function Fleet({ live }: { live: boolean }) {
         ) : (agents ?? []).length === 0 ? (
           <div className="empty-state">
             <div className="big">▤</div>
-            No agents yet. Register one:
+            No consumers yet. Register one — or grab the connect prompt from Broker:
             <div className="code-preview" style={{ marginTop: 14, textAlign: "left" }}>
-              pnpm agentctl register --name mac-01 --owner you --caps shell,gpu{"\n"}
-              pnpm agentctl subscribe --project research{"\n"}
+              pnpm agentctl register --name mac-01 --owner you --caps shell,gpu --project research{"\n"}
+              pnpm agentctl schedule install --interval 60 --project research{"\n"}
               pnpm agentctl run
             </div>
           </div>
@@ -36,7 +41,7 @@ export function Fleet({ live }: { live: boolean }) {
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>Agent</th>
+                  <th>Consumer</th>
                   <th>Owner</th>
                   <th>Capabilities</th>
                   <th>Status</th>
@@ -132,6 +137,34 @@ export function Fleet({ live }: { live: boolean }) {
                 : "—"}
             </dd>
           </dl>
+
+          <div className="section-label">Poll schedules</div>
+          {(schedules.data ?? []).length === 0 ? (
+            <div className="muted mono" style={{ fontSize: 12, marginBottom: 18 }}>
+              none registered — set up with <span style={{ color: "var(--txt-1)" }}>agentctl schedule install</span>
+            </div>
+          ) : (
+            <div className="tbl-wrap" style={{ marginBottom: 18 }}>
+              <table className="tbl">
+                <tbody>
+                  {(schedules.data ?? []).map((s) => (
+                    <tr key={s.id}>
+                      <td className="mono" style={{ fontSize: 11.5 }}>
+                        {s.kind === "site_update" ? "🛰 site update" : `⟳ ${s.project_name ?? "project"}`}
+                      </td>
+                      <td className="mono" style={{ fontSize: 11 }}>
+                        every {s.interval_seconds >= 3600 ? `${Math.round(s.interval_seconds / 3600)}h` : `${Math.round(s.interval_seconds / 60) || 1}m`}
+                      </td>
+                      <td className="mono" style={{ fontSize: 11, color: "var(--txt-3)" }}>
+                        last {s.last_polled_at ? ago(s.last_polled_at) : "never"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           <div className="section-label">Recent tasks</div>
           {detail.data.recent_tasks.length === 0 ? (
             <div className="muted mono" style={{ fontSize: 12 }}>

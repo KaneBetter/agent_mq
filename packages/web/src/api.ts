@@ -1,22 +1,28 @@
 import type {
   ActivityRecord,
+  AgentSchedule,
   AgentSummary,
   CalendarResponse,
   CostBreakdown,
   CreateProjectRequest,
+  CreateScheduleRequest,
   CreateTaskTypeRequest,
   EventType,
   Group,
+  OnboardingInfo,
   OverviewKPIs,
   Project,
+  ProjectDetail,
   ProjectSummary,
   PublishTaskRequest,
   RegisterAgentRequest,
   RegisterAgentResponse,
+  Schedule,
   Task,
   TaskDetail,
   TaskStatus,
   TaskType,
+  UpdateScheduleRequest,
 } from "@agentmq/shared";
 import { API_ROUTES } from "@agentmq/shared";
 
@@ -53,8 +59,29 @@ export const api = {
     req<{ agent: AgentSummary; recent_tasks: TaskDetail[] }>(API_ROUTES.agent(id)),
 
   projects: () => req<ProjectSummary[]>(API_ROUTES.projects),
+  project: (id: string) => req<ProjectDetail>(API_ROUTES.project(id)),
   createProject: (body: CreateProjectRequest) =>
     req<Project>(API_ROUTES.projects, { method: "POST", body: JSON.stringify(body) }),
+
+  schedules: (projectId?: string) => {
+    const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+    return req<Schedule[]>(`${API_ROUTES.schedules}${qs}`);
+  },
+  createSchedule: (body: CreateScheduleRequest) =>
+    req<Schedule>(API_ROUTES.schedules, { method: "POST", body: JSON.stringify(body) }),
+  updateSchedule: (id: string, body: UpdateScheduleRequest) =>
+    req<Schedule>(API_ROUTES.schedule(id), { method: "PATCH", body: JSON.stringify(body) }),
+  deleteSchedule: (id: string) => req<void>(API_ROUTES.schedule(id), { method: "DELETE" }),
+
+  agentSchedules: (params: { project_id?: string; agent_id?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.project_id) q.set("project_id", params.project_id);
+    if (params.agent_id) q.set("agent_id", params.agent_id);
+    const qs = q.toString();
+    return req<AgentSchedule[]>(`${API_ROUTES.agentSchedules}${qs ? `?${qs}` : ""}`);
+  },
+
+  onboarding: () => req<OnboardingInfo>(API_ROUTES.onboarding),
   createGroup: (body: { name: string; project_id: string }) =>
     req<Group>(API_ROUTES.groups, { method: "POST", body: JSON.stringify(body) }),
 
