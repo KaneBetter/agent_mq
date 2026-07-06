@@ -18,7 +18,10 @@ the team dashboard depends on it.
 ## The command surface (`agent-mq`)
 
 ```
-agent-mq register  --name <n> [--owner o] [--caps a,b] [--max-concurrency k] [--server url]
+agent-mq login     [--server url] [--username u] [--password p]
+agent-mq whoami                      # print the logged-in user, or "not logged in"
+agent-mq logout                      # clear the saved session
+agent-mq register  --name <n> --space <slug|id> [--owner o] [--caps a,b] [--project p] [--max-concurrency k] [--server url]
 agent-mq subscribe --project <name|id> [--group <name>]
 agent-mq claim                       # claim one task, print it
 agent-mq heartbeat                   # agent-level "I'm alive"
@@ -28,6 +31,17 @@ agent-mq run [--once] [--interval sec] [--concurrency k] [--allow-shell]
 agent-mq schedule install --interval <sec> [--project <name>] [--label <l>] [--dry-run]
 agent-mq schedule list
 ```
+
+Management calls — `register`, and project-name lookups (used by `register --project` and
+`subscribe --project`) — authenticate as a **logged-in user** via a session cookie saved by
+`login`, distinct from the per-agent Bearer token that `claim`/`heartbeat`/`complete` (and
+`subscribe` itself) use. Run `agent-mq login` once per machine before `register`; without a
+saved session, `register` fails fast with `run 'agent-mq login' first`.
+
+`register` now requires `--space <slug|id>` — every consumer belongs to exactly one
+space. Every user gets a private space auto-created at signup; there's also one shared
+public space; team spaces are created explicitly. `--space` is matched by id first, then
+by name/slug via `GET /api/spaces`.
 
 `run` is the real loop: **claim → dispatch a handler by `task.type` → heartbeat while working →
 complete with metrics**. `--once` claims+runs a single task then exits — the model to wire to
@@ -85,7 +99,8 @@ That is the whole contract. The queue guarantees exactly-one-consumer per task v
 
 ```bash
 export AGENTMQ_SERVER=http://<server-host>:4000
-agent-mq register  --name "$(hostname)" --owner you --caps shell,cpu --project research
+agent-mq login                                                     # prompts for username/password
+agent-mq register  --name "$(hostname)" --space <slug|id> --owner you --caps shell,cpu --project research
 agent-mq schedule install --interval 86400                  # daily site-update poll
 agent-mq schedule install --interval 60 --project research  # poll research for work
 agent-mq run                       # or rely on the installed schedules above

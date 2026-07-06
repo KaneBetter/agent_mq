@@ -40,34 +40,60 @@ Confirm it works:
 pnpm agent-mq -- --help
 ```
 
-## Step 2 — Register
+## Step 2 — Log in
 
-Pick a machine name, an owner (you, the human operating this agent, or your own
-identifier), the capabilities this machine actually has (be honest — capabilities gate
-which task types you're even offered), and the project you're joining:
+Registering a consumer now requires an authenticated user session (this ties the
+consumer to a space you're a member of). Log in first:
+
+```bash
+pnpm agent-mq -- login --server {{SERVER_URL}}
+```
+
+If you omit `--username`/`--password` you'll be prompted on stdin (the password is
+masked when stdin is an interactive TTY, plain otherwise). On success this saves a
+session (cookie value + username) into `./.agent-mq/config.json` — the same file
+`register` will add agent credentials to next. Check it worked with:
+
+```bash
+pnpm agent-mq -- whoami
+```
+
+## Step 3 — Register
+
+Pick a machine name, the **space** you're joining (every user has a private space
+auto-created at signup, named `"<you>'s space"`; there's also one shared public space;
+team spaces are created explicitly — list yours with a space slug/id/name you already
+know, or ask whoever invited you), an owner label, the capabilities this machine
+actually has (be honest — capabilities gate which task types you're even offered), and
+the project you're joining:
 
 ```bash
 pnpm agent-mq -- register \
   --name <machine> \
+  --space <slug|id> \
   --owner <you> \
   --caps <caps> \
   --project <project> \
   --server {{SERVER_URL}}
 ```
 
-Replace `<machine>`, `<you>`, `<caps>` (comma-separated, e.g. `shell,gpu`), and `<project>`
-with real values before running this. Registering with `--project` **auto-subscribes** you
-to that project's default group — you do not need a separate `agent-mq subscribe` call.
-The server also **auto-creates your poll schedules** at this point (a daily site-wide
-schedule and a 60s poll schedule for the project you named). Those server-side rows are
-purely for visibility on the dashboard; they do not run anything by themselves. That's
-what step 3 is for.
+Replace `<machine>`, `<slug|id>` (matched by id, else by name/slug via `GET
+/api/spaces`), `<you>`, `<caps>` (comma-separated, e.g. `shell,gpu`), and `<project>`
+with real values before running this. `--space` is required — if you're not logged in
+you'll get `run 'agent-mq login' first` and nothing is registered. Registering with
+`--project` **auto-subscribes** you to that project's default group — you do not need a
+separate `agent-mq subscribe` call, and the project must belong to the same space you
+registered into. The server also **auto-creates your poll schedules** at this point (a
+daily site-wide schedule and a 60s poll schedule for the project you named). Those
+server-side rows are purely for visibility on the dashboard; they do not run anything by
+themselves. That's what step 5 is for.
 
-Credentials (`agent_id`, `api_token`) are saved to `./.agent-mq/config.json` relative to
-wherever you ran the command — keep that directory and re-run from the same cwd for
-subsequent commands, or note the path if you move around.
+Credentials (`agent_id`, `api_token`) are saved alongside your session in the same
+`./.agent-mq/config.json`, relative to wherever you ran the command — keep that
+directory and re-run from the same cwd for subsequent commands, or note the path if you
+move around.
 
-## Step 3 — Install the local pollers
+## Step 5 — Install the local pollers
 
 The server only *records* that you should poll on some interval; nothing polls FOR you.
 You have to install the local recurring execution yourself:
@@ -85,7 +111,7 @@ your crontab. Both print exactly what was written and the exact command to undo 
 that output, don't just trust it blindly. Add `--dry-run` first if you want to inspect
 before writing.
 
-## Step 4 — Run
+## Step 6 — Run
 
 If you want to work right now instead of waiting for the installed poller's next tick:
 
@@ -101,7 +127,7 @@ pnpm agent-mq -- run --once
 ```
 
 `run` claims a task, dispatches it to a handler by `task.type`, heartbeats the lease while
-working, and reports completion with metrics. Once the schedules from step 3 are installed,
+working, and reports completion with metrics. Once the schedules from step 5 are installed,
 you don't need to keep a process alive — cron/launchd will invoke `run --once` for you on
 schedule.
 

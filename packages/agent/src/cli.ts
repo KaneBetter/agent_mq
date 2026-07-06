@@ -5,11 +5,14 @@ import type {
   CompleteTaskRequest,
   RegisterAgentRequest,
   ResultStatus,
+  SpaceSummary,
 } from "@agentmq/shared";
 import { ApiClient, ApiError } from "./api.js";
 import { getBool, getList, getNumber, getString, parseArgs } from "./args.js";
 import { loadConfig, resolveServer, saveConfig, updateConfig } from "./config.js";
 import { color, fail, info, ok, warn } from "./colors.js";
+import { PromptSession } from "./prompt.js";
+import { clearSession, saveSession, sessionFromConfig } from "./session.js";
 import { describeAssumption, installSchedule, listInstalledSchedules } from "./scheduleInstall.js";
 import { runWorker } from "./worker.js";
 
@@ -19,26 +22,44 @@ ${color.bold("USAGE")}
   agent-mq <command> [flags]
 
 ${color.bold("COMMANDS")}
-  register              Register this machine as an agent, save credentials
-  subscribe             Subscribe the registered agent to a project/group
-  claim                 Claim a single task and print it (no execution)
-  heartbeat             Send an agent-level heartbeat
-  complete <task_id>    Report a task result
-  fail <task_id>        Report a task failure (shortcut for complete --status failure)
-  run                   Worker loop: heartbeat -> claim -> dispatch -> complete
-  schedule install      Install a local recurring "run --once" (launchd/cron)
-  schedule list         List installed mq launchd/cron entries on this machine
+  login                  Log in as a user, save the session (cookie) locally
+  whoami                 Print the logged-in user, or "not logged in"
+  logout                 Clear the saved session (best-effort server logout)
+  register               Register this machine as an agent, save credentials
+  subscribe              Subscribe the registered agent to a project/group
+  claim                  Claim a single task and print it (no execution)
+  heartbeat              Send an agent-level heartbeat
+  complete <task_id>     Report a task result
+  fail <task_id>         Report a task failure (shortcut for complete --status failure)
+  run                    Worker loop: heartbeat -> claim -> dispatch -> complete
+  schedule install       Install a local recurring "run --once" (launchd/cron)
+  schedule list          List installed mq launchd/cron entries on this machine
 
 ${color.bold("GLOBAL FLAGS")}
   --server <url>        Server base URL (else AGENTMQ_SERVER env, else saved config,
                          else http://localhost:4000)
 
+${color.bold("login")}
+  --server <url>         Optional. Server to log into (see GLOBAL FLAGS precedence).
+  --username <u>         Optional. Prompted on stdin if omitted.
+  --password <p>         Optional. Prompted on stdin (hidden if TTY) if omitted.
+
+${color.bold("whoami")}
+  (no flags — prints the current session's user, or "not logged in")
+
+${color.bold("logout")}
+  (no flags — clears the saved session)
+
 ${color.bold("register")}
   --name <name>          Required. Agent display name.
+  --space <slug|id>      Required. Space to register this consumer into
+                         (matched by id, else by name/slug via GET /api/spaces).
   --owner <owner>        Optional owner/human label.
   --caps <a,b,c>         Comma-separated capability tags (e.g. shell,gpu).
   --max-concurrency <k>  Max in-flight tasks (default server-side default).
+  --project <id|name>    Optional. Auto-subscribe to this project on register.
   --server <url>
+  Requires a saved login session (run \`agent-mq login\` first).
 
 ${color.bold("subscribe")}
   --project <id|name>    Required. Project id or name (name is resolved via GET /api/projects).
@@ -78,13 +99,16 @@ ${color.bold("schedule list")}
   (no flags — lists installed launchd (macOS) / cron (Linux) mq entries)
 
 ${color.bold("EXAMPLES")}
-  agent-mq register --name mac-01 --caps shell,gpu --owner alice
+  agent-mq login --server http://localhost:4000
+  agent-mq whoami
+  agent-mq register --name mac-01 --space my-team --caps shell,gpu --owner alice --project research
   agent-mq subscribe --project research
   agent-mq run
   agent-mq run --once --allow-shell
   agent-mq schedule install --interval 86400
   agent-mq schedule install --interval 60 --project research
   agent-mq schedule list
+  agent-mq logout
 `;
 
 function printHelp(): void {
@@ -101,26 +125,146 @@ function requireAgentCredentials(
   return { agentId: config.agent_id, apiToken: config.api_token };
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Look up the saved session, exiting with the mandated error if there isn't one. */
+function requireSessionOrExit(
+  config: Awaited<ReturnType<typeof loadConfig>>,
+): { session_token: string; username: string } {
+  const session = sessionFromConfig(config);
+  if (!session) {
+    fail("run 'agent-mq login' first");
+    process.exit(1);
+  }
+  return session;
+}
+
+/** Resolve a `--space <slug|id>` argument to a space id: direct UUID match, else name/slug via GET /api/spaces. */
+async function resolveSpaceId(api: ApiClient, spaceIdOrSlug: string): Promise<string> {
+  if (UUID_PATTERN.test(spaceIdOrSlug)) return spaceIdOrSlug;
+
+  const spaces = await api.spaces();
+  const match = spaces.find(
+    (s: SpaceSummary) => s.id === spaceIdOrSlug || s.slug === spaceIdOrSlug || s.name === spaceIdOrSlug,
+  );
+  if (!match) {
+    throw new Error(
+      `no space matching "${spaceIdOrSlug}" found (checked GET /api/spaces by id/slug/name)`,
+    );
+  }
+  return match.id;
+}
+
+async function cmdLogin(flags: Map<string, string | true>): Promise<void> {
+  const config = await loadConfig();
+  const server = resolveServer(getString(flags, "server"), config.server);
+  const api = new ApiClient({ server });
+
+  let username = getString(flags, "username");
+  let password = getString(flags, "password");
+  if (!username || !password) {
+    const prompts = new PromptSession();
+    try {
+      if (!username) username = await prompts.promptLine("username: ");
+      if (!password) password = await prompts.promptPassword("password: ");
+    } finally {
+      prompts.close();
+    }
+  }
+  if (!username || !password) {
+    fail("username and password are required");
+    process.exit(1);
+  }
+
+  info(`logging in to ${server} as "${username}"...`);
+  const { auth, sessionToken } = await api.login({ username, password });
+  await saveSession({ session_token: sessionToken, username: auth.user.username });
+  await updateConfig({ server });
+  ok(`logged in as ${color.bold(auth.user.username)}`);
+}
+
+async function cmdWhoami(flags: Map<string, string | true>): Promise<void> {
+  const config = await loadConfig();
+  const session = sessionFromConfig(config);
+  if (!session) {
+    info("not logged in");
+    return;
+  }
+  const server = resolveServer(getString(flags, "server"), config.server);
+  const api = new ApiClient({ server, sessionToken: session.session_token });
+
+  try {
+    const res = await api.authMe();
+    ok(`logged in as ${color.bold(res.user.username)} (${server})`);
+  } catch (err: unknown) {
+    if (err instanceof ApiError && err.status === 401) {
+      info("not logged in");
+      return;
+    }
+    throw err;
+  }
+}
+
+async function cmdLogout(flags: Map<string, string | true>): Promise<void> {
+  const config = await loadConfig();
+  const session = sessionFromConfig(config);
+  if (!session) {
+    info("not logged in");
+    return;
+  }
+  const server = resolveServer(getString(flags, "server"), config.server);
+  const api = new ApiClient({ server, sessionToken: session.session_token });
+
+  try {
+    await api.authLogout();
+  } catch (err: unknown) {
+    // Best-effort: clear the local session regardless of server-side outcome.
+    const message = err instanceof Error ? err.message : String(err);
+    warn(`server logout failed (clearing local session anyway): ${message}`);
+  }
+  await clearSession();
+  ok("logged out");
+}
+
 async function cmdRegister(flags: Map<string, string | true>): Promise<void> {
   const name = getString(flags, "name");
   if (!name) {
     fail("--name is required");
     process.exit(1);
   }
+
+  // Check the session before --space: an unauthenticated caller should see
+  // "run 'agent-mq login' first" regardless of which other flags are missing.
   const config = await loadConfig();
+  const session = requireSessionOrExit(config);
+
+  const spaceArg = getString(flags, "space");
+  if (!spaceArg) {
+    fail("--space <slug|id> is required");
+    process.exit(1);
+  }
+
   const server = resolveServer(getString(flags, "server"), config.server);
-  const api = new ApiClient({ server });
+  const api = new ApiClient({ server, sessionToken: session.session_token });
+
+  const spaceId = await resolveSpaceId(api, spaceArg);
+
+  const projectArg = getString(flags, "project");
+  const projectId = projectArg ? await resolveProjectId(api, projectArg) : undefined;
 
   const req: RegisterAgentRequest = {
     name,
     owner: getString(flags, "owner"),
     capabilities: getList(flags, "caps"),
     max_concurrency: getNumber(flags, "max-concurrency"),
+    space_id: spaceId,
+    project_id: projectId,
   };
 
-  info(`registering "${name}" with ${server}...`);
+  info(`registering "${name}" with ${server} (space=${spaceId})...`);
   const res = await api.register(req);
   await saveConfig({
+    ...config,
     server,
     agent_id: res.agent_id,
     api_token: res.api_token,
@@ -133,8 +277,7 @@ async function cmdRegister(flags: Map<string, string | true>): Promise<void> {
 
 async function resolveProjectId(api: ApiClient, projectIdOrName: string): Promise<string> {
   // If it already looks like a UUID, use it directly rather than resolving by name.
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (uuidPattern.test(projectIdOrName)) return projectIdOrName;
+  if (UUID_PATTERN.test(projectIdOrName)) return projectIdOrName;
 
   const projects = await api.listProjects();
   const match = projects.find((p) => p.name === projectIdOrName);
@@ -149,8 +292,9 @@ async function resolveProjectId(api: ApiClient, projectIdOrName: string): Promis
 async function cmdSubscribe(flags: Map<string, string | true>): Promise<void> {
   const config = await loadConfig();
   const { apiToken } = requireAgentCredentials(config);
+  const session = requireSessionOrExit(config);
   const server = resolveServer(getString(flags, "server"), config.server);
-  const api = new ApiClient({ server, apiToken });
+  const api = new ApiClient({ server, apiToken, sessionToken: session.session_token });
 
   const projectArg = getString(flags, "project");
   if (!projectArg) {
@@ -329,10 +473,14 @@ async function cmdSchedule(subcommand: string | undefined, flags: Map<string, st
 
 async function main(): Promise<void> {
   // pnpm/npm forward a literal "--" separator when script chains are nested
-  // (e.g. `pnpm agent-mq -- --help` -> `pnpm --filter ... start -- -- help`).
-  // Strip a leading bare "--" so both direct and pnpm-wrapped invocations work.
+  // (e.g. `pnpm agent-mq -- --help` -> `pnpm --filter ... start -- -- --help`,
+  // two levels of wrapping when invoked via the root `agent-mq` script, which
+  // itself ends in `start --`). Strip ALL leading bare "--" tokens so direct,
+  // single-wrapped, and double-wrapped invocations all work.
   const rawArgv = process.argv.slice(2);
-  const argv = rawArgv[0] === "--" ? rawArgv.slice(1) : rawArgv;
+  let stripIdx = 0;
+  while (rawArgv[stripIdx] === "--") stripIdx++;
+  const argv = rawArgv.slice(stripIdx);
   const command = argv[0];
   const rest = argv.slice(1);
   const { flags, positionals } = parseArgs(rest);
@@ -344,6 +492,15 @@ async function main(): Promise<void> {
 
   try {
     switch (command) {
+      case "login":
+        await cmdLogin(flags);
+        break;
+      case "whoami":
+        await cmdWhoami(flags);
+        break;
+      case "logout":
+        await cmdLogout(flags);
+        break;
       case "register":
         await cmdRegister(flags);
         break;

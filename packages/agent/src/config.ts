@@ -13,6 +13,9 @@ export interface AgentConfig {
   api_token?: string;
   name?: string;
   max_concurrency?: number;
+  /** Logged-in user session (see session.ts): the `mq_session` cookie value + username. */
+  session_token?: string;
+  username?: string;
 }
 
 /** Read the persisted config file, if any. Returns an empty shell on missing/corrupt file. */
