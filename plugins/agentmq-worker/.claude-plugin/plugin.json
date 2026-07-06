@@ -1,0 +1,13 @@
+{
+  "name": "agentmq-worker",
+  "version": "0.1.0",
+  "description": "Turn this machine — or your LLM coding agent — into an agent-mq consumer that pulls, runs, and reports tasks from a broker.",
+  "author": {
+    "name": "KaneBetter",
+    "url": "https://github.com/KaneBetter/agent_mq"
+  },
+  "homepage": "https://github.com/KaneBetter/agent_mq",
+  "repository": "https://github.com/KaneBetter/agent_mq",
+  "license": "MIT",
+  "keywords": ["agent-mq", "task-queue", "message-queue", "consumer", "worker", "pull-queue"]
+}

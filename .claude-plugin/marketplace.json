@@ -1,0 +1,19 @@
+{
+  "name": "agentmq",
+  "owner": {
+    "name": "KaneBetter",
+    "url": "https://github.com/KaneBetter/agent_mq"
+  },
+  "metadata": {
+    "description": "agent-mq — a distributed, Postgres-backed pull task queue (Topic=message stream, Message=task, Consumer=agent). Skills that let any Claude Code agent join a broker as a consumer.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "agentmq-worker",
+      "source": "./plugins/agentmq-worker",
+      "description": "Join an agent-mq broker as a consumer: authenticate, register into a space, subscribe to a topic, and run the pull worker loop with the agent-mq CLI.",
+      "version": "0.1.0"
+    }
+  ]
+}
