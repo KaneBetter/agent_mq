@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-// agentctl — the agent-mq worker CLI. See BUILD-CONTRACT.md for the full spec.
+// agent-mq — the agent-mq worker CLI. See BUILD-CONTRACT.md for the full spec.
 import type {
   ClaimedTask,
   CompleteTaskRequest,
@@ -13,10 +13,10 @@ import { color, fail, info, ok, warn } from "./colors.js";
 import { describeAssumption, installSchedule, listInstalledSchedules } from "./scheduleInstall.js";
 import { runWorker } from "./worker.js";
 
-const HELP = `${color.bold("agentctl")} — agent-mq worker CLI
+const HELP = `${color.bold("agent-mq")} — agent-mq worker CLI
 
 ${color.bold("USAGE")}
-  agentctl <command> [flags]
+  agent-mq <command> [flags]
 
 ${color.bold("COMMANDS")}
   register              Register this machine as an agent, save credentials
@@ -67,7 +67,7 @@ ${color.bold("run")}
   --allow-shell          Enable the shell.command handler (disabled by default).
 
 ${color.bold("schedule install")}
-  --interval <sec>       Required. Seconds between runs of \`agentctl run --once\`.
+  --interval <sec>       Required. Seconds between runs of \`agent-mq run --once\`.
   --project <name>       Optional. Poll this project (label defaults to project-<name>).
                           Omit for the daily site-wide poll (label defaults to site-update).
   --label <l>            Optional. Override the derived label.
@@ -78,13 +78,13 @@ ${color.bold("schedule list")}
   (no flags — lists installed launchd (macOS) / cron (Linux) mq entries)
 
 ${color.bold("EXAMPLES")}
-  agentctl register --name mac-01 --caps shell,gpu --owner alice
-  agentctl subscribe --project research
-  agentctl run
-  agentctl run --once --allow-shell
-  agentctl schedule install --interval 86400
-  agentctl schedule install --interval 60 --project research
-  agentctl schedule list
+  agent-mq register --name mac-01 --caps shell,gpu --owner alice
+  agent-mq subscribe --project research
+  agent-mq run
+  agent-mq run --once --allow-shell
+  agent-mq schedule install --interval 86400
+  agent-mq schedule install --interval 60 --project research
+  agent-mq schedule list
 `;
 
 function printHelp(): void {
@@ -95,7 +95,7 @@ function requireAgentCredentials(
   config: Awaited<ReturnType<typeof loadConfig>>,
 ): { agentId: string; apiToken: string } {
   if (!config.agent_id || !config.api_token) {
-    fail("no registered agent found; run `agentctl register --name <name>` first");
+    fail("no registered agent found; run `agent-mq register --name <name>` first");
     process.exit(1);
   }
   return { agentId: config.agent_id, apiToken: config.api_token };
@@ -128,7 +128,7 @@ async function cmdRegister(flags: Map<string, string | true>): Promise<void> {
     max_concurrency: res.agent.max_concurrency,
   });
   ok(`registered agent ${color.bold(res.agent_id)} (max_concurrency=${res.agent.max_concurrency})`);
-  info(`credentials saved to ./.agentctl/config.json`);
+  info(`credentials saved to ./.agent-mq/config.json`);
 }
 
 async function resolveProjectId(api: ApiClient, projectIdOrName: string): Promise<string> {
@@ -321,15 +321,15 @@ async function cmdSchedule(subcommand: string | undefined, flags: Map<string, st
       await cmdScheduleList();
       break;
     default:
-      fail(`usage: agentctl schedule install --interval <sec> [--project <name>] [--label <l>] [--dry-run]`);
-      fail(`   or: agentctl schedule list`);
+      fail(`usage: agent-mq schedule install --interval <sec> [--project <name>] [--label <l>] [--dry-run]`);
+      fail(`   or: agent-mq schedule list`);
       process.exit(1);
   }
 }
 
 async function main(): Promise<void> {
   // pnpm/npm forward a literal "--" separator when script chains are nested
-  // (e.g. `pnpm agentctl -- --help` -> `pnpm --filter ... start -- -- help`).
+  // (e.g. `pnpm agent-mq -- --help` -> `pnpm --filter ... start -- -- help`).
   // Strip a leading bare "--" so both direct and pnpm-wrapped invocations work.
   const rawArgv = process.argv.slice(2);
   const argv = rawArgv[0] === "--" ? rawArgv.slice(1) : rawArgv;
@@ -359,7 +359,7 @@ async function main(): Promise<void> {
       case "complete": {
         const taskId = positionals[0];
         if (!taskId) {
-          fail("usage: agentctl complete <task_id> --status success|failure");
+          fail("usage: agent-mq complete <task_id> --status success|failure");
           process.exit(1);
         }
         await cmdComplete(taskId, flags);
@@ -368,7 +368,7 @@ async function main(): Promise<void> {
       case "fail": {
         const taskId = positionals[0];
         if (!taskId) {
-          fail("usage: agentctl fail <task_id> [--error msg]");
+          fail("usage: agent-mq fail <task_id> [--error msg]");
           process.exit(1);
         }
         await cmdComplete(taskId, flags, "failure");

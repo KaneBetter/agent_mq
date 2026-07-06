@@ -1,10 +1,10 @@
-// Client-side recurring executor for `agentctl schedule install|list`.
+// Client-side recurring executor for `agent-mq schedule install|list`.
 //
 // The server (see BUILD-CONTRACT.md v4 delta) records agent polling schedules
 // on register/subscribe purely for visibility in the dashboard — it never
 // triggers anything itself. THIS module is the executor: it wires up a local
 // launchd (macOS) or cron (Linux) job that periodically shells out to
-// `agentctl run --once`, so a claim actually happens on the interval the
+// `agent-mq run --once`, so a claim actually happens on the interval the
 // server thinks is being honored.
 //
 // Security: every input (label, project name, interval) is treated as
@@ -61,7 +61,7 @@ export function deriveLabel(project: string | undefined, explicit: string | unde
 }
 
 /**
- * Resolve the repo-relative absolute paths needed to invoke `agentctl run --once`
+ * Resolve the repo-relative absolute paths needed to invoke `agent-mq run --once`
  * from anywhere (cron/launchd run with a minimal environment and an unrelated
  * cwd, so relative paths and "pnpm --filter" workspace resolution are not
  * reliable). We instead resolve:
@@ -214,7 +214,7 @@ function buildCronLine(label: string, schedule: string, command: string[]): stri
 }
 
 function cronLogPath(label: string): string {
-  return path.join(homedir(), ".agentctl", "logs", `${label}.log`);
+  return path.join(homedir(), ".agent-mq", "logs", `${label}.log`);
 }
 
 function quoteShellPath(p: string): string {
@@ -250,7 +250,7 @@ async function installLinux(options: ScheduleInstallOptions): Promise<ScheduleIn
     };
   }
 
-  await mkdir(path.join(homedir(), ".agentctl", "logs"), { recursive: true });
+  await mkdir(path.join(homedir(), ".agent-mq", "logs"), { recursive: true });
 
   const existing = readCurrentCrontab();
   const marker = `${CRON_MARKER_PREFIX}${label}$`;
@@ -273,7 +273,7 @@ async function installLinux(options: ScheduleInstallOptions): Promise<ScheduleIn
   };
 }
 
-/** Install (or dry-run print) a recurring `agentctl run --once` on this machine. */
+/** Install (or dry-run print) a recurring `agent-mq run --once` on this machine. */
 export async function installSchedule(
   options: ScheduleInstallOptions,
 ): Promise<ScheduleInstallResult> {
@@ -288,7 +288,7 @@ export async function installSchedule(
   if (plat === "linux") return installLinux(options);
 
   throw new Error(
-    `agentctl schedule install is only implemented for macOS (launchd) and Linux (cron); this host reports platform=${plat}`,
+    `agent-mq schedule install is only implemented for macOS (launchd) and Linux (cron); this host reports platform=${plat}`,
   );
 }
 
@@ -348,13 +348,13 @@ export async function listInstalledSchedules(): Promise<InstalledScheduleEntry[]
   return [];
 }
 
-/** Read the current agentctl schedule config file to show the assumption baked into the executor. */
+/** Read the current agent-mq schedule config file to show the assumption baked into the executor. */
 export async function describeAssumption(): Promise<string> {
   const thisFile = fileURLToPath(import.meta.url);
   const agentPkgDir = path.dirname(path.dirname(thisFile));
   return (
     `Assumes this repo checkout stays at ${path.dirname(agentPkgDir)} and ` +
     `\`pnpm install\` has been run (so ${path.join(agentPkgDir, "node_modules", ".bin", "tsx")} exists). ` +
-    `If you move or delete the checkout, re-run \`agentctl schedule install\`.`
+    `If you move or delete the checkout, re-run \`agent-mq schedule install\`.`
   );
 }

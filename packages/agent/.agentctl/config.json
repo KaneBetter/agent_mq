@@ -1,0 +1,7 @@
+{
+  "server": "http://server:4000",
+  "agent_id": "7d52b194-0ac9-4767-97e4-aba433d4c87a",
+  "api_token": "9914295f5dc5ad37c0565fae4d44c04c5fa91a20b7f98f65eb52b56edb5dd19b",
+  "name": "docker-agent",
+  "max_concurrency": 3
+}

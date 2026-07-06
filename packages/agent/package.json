@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
+    "agent-mq": "src/cli.ts",
     "agentctl": "src/cli.ts"
   },
   "scripts": {

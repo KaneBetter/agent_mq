@@ -1,12 +1,12 @@
 ---
 name: agentmq-worker
-description: Use when this machine should act as a worker in the agent-mq distributed task queue — register, subscribe to a project, pull tasks with agentctl, run them, and report results + token usage. The agent IS the consumer.
+description: Use when this machine should act as a worker in the agent-mq distributed task queue — register, subscribe to a project, pull tasks with agent-mq, run them, and report results + token usage. The agent IS the consumer.
 ---
 
 # agent-mq worker
 
 You are a **worker (consumer)** in a distributed task queue. A central server holds a
-queue of tasks grouped by **project** (topic). You pull work with the `agentctl` CLI,
+queue of tasks grouped by **project** (topic). You pull work with the `agent-mq` CLI,
 run it, and report the result plus token usage. You never receive pushes — you pull,
 so nothing needs to reach through your firewall.
 
@@ -15,18 +15,18 @@ Claiming is **FIFO + capability match + concurrency limit**. There is **no scori
 reported tokens/timing are display-only and never change what you get. Report honestly anyway;
 the team dashboard depends on it.
 
-## The command surface (`agentctl`)
+## The command surface (`agent-mq`)
 
 ```
-agentctl register  --name <n> [--owner o] [--caps a,b] [--max-concurrency k] [--server url]
-agentctl subscribe --project <name|id> [--group <name>]
-agentctl claim                       # claim one task, print it
-agentctl heartbeat                   # agent-level "I'm alive"
-agentctl complete <task_id> --status success|failure [--result '<json>'] [--tokens in,out] [--model m]
-agentctl fail <task_id> [--error "msg"]
-agentctl run [--once] [--interval sec] [--concurrency k] [--allow-shell]
-agentctl schedule install --interval <sec> [--project <name>] [--label <l>] [--dry-run]
-agentctl schedule list
+agent-mq register  --name <n> [--owner o] [--caps a,b] [--max-concurrency k] [--server url]
+agent-mq subscribe --project <name|id> [--group <name>]
+agent-mq claim                       # claim one task, print it
+agent-mq heartbeat                   # agent-level "I'm alive"
+agent-mq complete <task_id> --status success|failure [--result '<json>'] [--tokens in,out] [--model m]
+agent-mq fail <task_id> [--error "msg"]
+agent-mq run [--once] [--interval sec] [--concurrency k] [--allow-shell]
+agent-mq schedule install --interval <sec> [--project <name>] [--label <l>] [--dry-run]
+agent-mq schedule list
 ```
 
 `run` is the real loop: **claim → dispatch a handler by `task.type` → heartbeat while working →
@@ -34,7 +34,7 @@ complete with metrics**. `--once` claims+runs a single task then exits — the m
 `cron` / `launchd` / Task Scheduler so there is no long-lived process to crash.
 
 `schedule install` is that wiring, done for you: it installs a client-side recurring job
-(a `launchd` plist on macOS, a crontab line on Linux) that runs `agentctl run --once` every
+(a `launchd` plist on macOS, a crontab line on Linux) that runs `agent-mq run --once` every
 `--interval` seconds. The server records agent polling schedules for visibility (it upserts
 a daily "site_update" row on register, plus a 60s "project_poll" row per project you
 register/subscribe to) — but the server never triggers anything itself. `schedule install`
@@ -70,12 +70,12 @@ counts so the whole system demos with zero API keys.
 **B. LLM-as-handler (you are the executor).** When *you* (an LLM agent) are the worker:
 
 ```
-1. agentctl claim                      → get { id, type, payload, project_name }
+1. agent-mq claim                      → get { id, type, payload, project_name }
 2. read this skill + read the payload  → understand the job
 3. do the work (call tools, write files, research, draft…)
-   - periodically: agentctl heartbeat is handled for you inside `run`; if you drive the
+   - periodically: agent-mq heartbeat is handled for you inside `run`; if you drive the
      steps manually, call heartbeat yourself before the lease (default 15 min) expires
-4. agentctl complete <id> --status success --result '<json>' --tokens <in>,<out> --model <m>
+4. agent-mq complete <id> --status success --result '<json>' --tokens <in>,<out> --model <m>
 ```
 
 That is the whole contract. The queue guarantees exactly-one-consumer per task via Postgres
@@ -85,10 +85,10 @@ That is the whole contract. The queue guarantees exactly-one-consumer per task v
 
 ```bash
 export AGENTMQ_SERVER=http://<server-host>:4000
-agentctl register  --name "$(hostname)" --owner you --caps shell,cpu --project research
-agentctl schedule install --interval 86400                  # daily site-update poll
-agentctl schedule install --interval 60 --project research  # poll research for work
-agentctl run                       # or rely on the installed schedules above
+agent-mq register  --name "$(hostname)" --owner you --caps shell,cpu --project research
+agent-mq schedule install --interval 86400                  # daily site-update poll
+agent-mq schedule install --interval 60 --project research  # poll research for work
+agent-mq run                       # or rely on the installed schedules above
 ```
 
 ## Onboarding a brand-new machine (the full prompt)

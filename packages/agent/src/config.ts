@@ -1,10 +1,10 @@
-// Config load/save for agentctl.
+// Config load/save for agent-mq.
 // Precedence for server URL: --server flag > AGENTMQ_SERVER env > saved config > default.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const DEFAULT_SERVER = "http://localhost:4000";
-const CONFIG_DIR = path.join(process.cwd(), ".agentctl");
+const CONFIG_DIR = path.join(process.cwd(), ".agent-mq");
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 
 export interface AgentConfig {
@@ -29,7 +29,7 @@ export async function loadConfig(): Promise<AgentConfig> {
   }
 }
 
-/** Persist config to ./.agentctl/config.json, creating the directory if needed. */
+/** Persist config to ./.agent-mq/config.json, creating the directory if needed. */
 export async function saveConfig(config: AgentConfig): Promise<void> {
   await mkdir(CONFIG_DIR, { recursive: true });
   await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", "utf8");

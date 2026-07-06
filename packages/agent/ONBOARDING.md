@@ -9,7 +9,7 @@ agent-mq is a Postgres-backed pull task queue. Mental model: **Project = Topic,
 Task = Message, you (the agent on this machine) = Consumer, Group = Consumer Group**.
 Routing is FIFO + a hard capability filter + a per-agent concurrency limit — there is no
 scoring, no reputation, nothing you can game. You never receive a push; you pull work with
-the `agentctl` CLI, run it, and report the result honestly.
+the `agent-mq` CLI, run it, and report the result honestly.
 
 The deployment you are joining is at:
 
@@ -22,9 +22,9 @@ fills it in with the real URL when it serves this prompt via `GET /api/onboardin
 human pasted this to you directly, they will have told you the real URL to use in its
 place; use whatever `{{SERVER_URL}}` resolves to consistently for every command below.)
 
-## Step 1 — Obtain agentctl
+## Step 1 — Obtain agent-mq
 
-You need the `agentctl` CLI on this machine. If you don't already have a working copy:
+You need the `agent-mq` CLI on this machine. If you don't already have a working copy:
 
 ```bash
 git clone <the agent-mq repo> agent_mq
@@ -32,12 +32,12 @@ cd agent_mq
 pnpm install
 ```
 
-`agentctl` lives at `packages/agent/src/cli.ts` and is invoked via `pnpm agentctl -- <args>`
+`agent-mq` lives at `packages/agent/src/cli.ts` and is invoked via `pnpm agent-mq -- <args>`
 from the repo root, or directly with `tsx packages/agent/src/cli.ts <args>` from anywhere.
 Confirm it works:
 
 ```bash
-pnpm agentctl -- --help
+pnpm agent-mq -- --help
 ```
 
 ## Step 2 — Register
@@ -47,7 +47,7 @@ identifier), the capabilities this machine actually has (be honest — capabilit
 which task types you're even offered), and the project you're joining:
 
 ```bash
-pnpm agentctl -- register \
+pnpm agent-mq -- register \
   --name <machine> \
   --owner <you> \
   --caps <caps> \
@@ -57,13 +57,13 @@ pnpm agentctl -- register \
 
 Replace `<machine>`, `<you>`, `<caps>` (comma-separated, e.g. `shell,gpu`), and `<project>`
 with real values before running this. Registering with `--project` **auto-subscribes** you
-to that project's default group — you do not need a separate `agentctl subscribe` call.
+to that project's default group — you do not need a separate `agent-mq subscribe` call.
 The server also **auto-creates your poll schedules** at this point (a daily site-wide
 schedule and a 60s poll schedule for the project you named). Those server-side rows are
 purely for visibility on the dashboard; they do not run anything by themselves. That's
 what step 3 is for.
 
-Credentials (`agent_id`, `api_token`) are saved to `./.agentctl/config.json` relative to
+Credentials (`agent_id`, `api_token`) are saved to `./.agent-mq/config.json` relative to
 wherever you ran the command — keep that directory and re-run from the same cwd for
 subsequent commands, or note the path if you move around.
 
@@ -73,8 +73,8 @@ The server only *records* that you should poll on some interval; nothing polls F
 You have to install the local recurring execution yourself:
 
 ```bash
-pnpm agentctl -- schedule install --interval 86400
-pnpm agentctl -- schedule install --interval 60 --project <project>
+pnpm agent-mq -- schedule install --interval 86400
+pnpm agent-mq -- schedule install --interval 60 --project <project>
 ```
 
 The first installs a daily "site-update" poller (checks in on the deployment generally).
@@ -90,14 +90,14 @@ before writing.
 If you want to work right now instead of waiting for the installed poller's next tick:
 
 ```bash
-pnpm agentctl -- run
+pnpm agent-mq -- run
 ```
 
 or, for a single claim+dispatch+complete cycle (the same thing your installed schedule
 will invoke automatically going forward):
 
 ```bash
-pnpm agentctl -- run --once
+pnpm agent-mq -- run --once
 ```
 
 `run` claims a task, dispatches it to a handler by `task.type`, heartbeats the lease while
@@ -129,9 +129,9 @@ schedule.
    Declare capabilities honestly — claiming `gpu` on a machine with no GPU means you'll be
    handed work you can't complete.
 6. **If you're an LLM agent acting as the executor yourself** (rather than dispatching to
-   a scripted handler), the loop is: `agentctl claim` -> read the payload -> do the real
-   work -> `agentctl complete <id> --status success|failure --result '<json>' --tokens
-   <in>,<out> --model <name>`. Call `agentctl heartbeat`/the task heartbeat periodically if
+   a scripted handler), the loop is: `agent-mq claim` -> read the payload -> do the real
+   work -> `agent-mq complete <id> --status success|failure --result '<json>' --tokens
+   <in>,<out> --model <name>`. Call `agent-mq heartbeat`/the task heartbeat periodically if
    you're driving this manually instead of through `run`, so your lease doesn't expire
    mid-task.
 

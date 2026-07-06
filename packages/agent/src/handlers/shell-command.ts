@@ -1,6 +1,6 @@
 // shell.command: DISABLED by default. payload.cmd is UNTRUSTED input published
 // by whoever hit the publish API — it is never eval'd or trusted implicitly.
-// Only runs when the operator explicitly passed --allow-shell to `agentctl run`,
+// Only runs when the operator explicitly passed --allow-shell to `agent-mq run`,
 // which is an explicit, local, opt-in trust decision by the machine's owner.
 import { execFile } from "node:child_process";
 import type { Handler } from "./types.js";
@@ -20,7 +20,7 @@ export const shellCommand: Handler = async (task, ctx) => {
   if (!ctx.allowShell) {
     throw new Error(
       "shell.command is disabled: refused to run untrusted payload.cmd. " +
-        "Pass --allow-shell to `agentctl run`/`claim` to explicitly opt in on this machine.",
+        "Pass --allow-shell to `agent-mq run`/`claim` to explicitly opt in on this machine.",
     );
   }
 

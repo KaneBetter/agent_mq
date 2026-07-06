@@ -75,7 +75,7 @@ export class ApiClient {
     if (auth) {
       if (!this.apiToken) {
         throw new Error(
-          "No api_token available for authenticated request; run `agentctl register` first.",
+          "No api_token available for authenticated request; run `agent-mq register` first.",
         );
       }
       headers.authorization = `Bearer ${this.apiToken}`;
