@@ -24,6 +24,7 @@ import { mapTaskDetailRow, TASK_DETAIL_SELECT, type TaskDetailRow } from "../row
 import {
   ensureProjectPollSchedule,
   ensureSiteUpdateSchedule,
+  ensureSpacePollSchedule,
   touchSiteUpdateSchedule,
 } from "../agentSchedules.js";
 
@@ -203,8 +204,10 @@ export function registerAgentRoutes(app: FastifyInstance): void {
 
       const agent = mapAgentRow({ ...row, space_name: space.name });
 
-      // Always register the agent's global site-update poll schedule.
+      // Lifecycle step 1 (connect): the global 24h site-update / news poll.
       await ensureSiteUpdateSchedule(client, agent.id);
+      // Lifecycle step 3 (register agent to space): the 24h space poll.
+      await ensureSpacePollSchedule(client, agent.id, spaceId);
 
       // Optional register-in-project: upsert the group for this project, then subscribe.
       if (projectId) {

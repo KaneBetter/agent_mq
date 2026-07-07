@@ -4,8 +4,9 @@ import { api } from "../api";
 import { usePoll } from "../hooks";
 import { ago, compactNum, hm, recurrenceLabel, shortId } from "../format";
 import { useModals } from "../modals";
-import { AgentPill, Caps, Modal, Panel, StatusPill, Tags } from "../components/ui";
+import { AgentPill, Caps, Drawer, Modal, Panel, StatusPill, Tags } from "../components/ui";
 import { ActivityStream } from "../components/ActivityStream";
+import { MessageDetail } from "../components/MessageDetail";
 import { Publish } from "./Publish";
 import { Calendar } from "./Calendar";
 
@@ -24,6 +25,13 @@ export function TopicPage({ topicId, sub, live }: { topicId: string; sub: string
   const activity = usePoll(() => api.activity({ project_id: topicId, limit: 80 }), [topicId], live ? 3000 : 9000);
   const [busy, setBusy] = useState<string | null>(null);
   const [reassign, setReassign] = useState<TaskDetail | null>(null);
+  const [openMsg, setOpenMsg] = useState<string | null>(null);
+  // Live-poll the opened message so its progress log grows while the agent works.
+  const msgDetail = usePoll(
+    () => (openMsg ? api.task(openMsg) : Promise.resolve(null)),
+    [openMsg],
+    openMsg && live ? 2500 : 0
+  );
 
   const p: PDetail | null = data;
   if (error) return <div className="empty-state"><div className="big">⚠</div>{error}</div>;
@@ -99,17 +107,20 @@ export function TopicPage({ topicId, sub, live }: { topicId: string; sub: string
             <table className="tbl">
               <thead><tr><th>Type</th><th>Status</th><th>Consumer</th><th style={{ textAlign: "right" }}>Priority</th><th style={{ textAlign: "right" }}>Tokens</th><th>Age</th><th></th></tr></thead>
               <tbody>
-                {all.slice().sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)).slice(0, 150).map((t) => (
-                  <tr key={t.id}>
-                    <td><div className="mono" style={{ fontSize: 12 }}>{t.type}{t.schedule_id ? <span style={{ color: "var(--scheduled)" }}> ⟳</span> : null}</div>{t.tags.length > 0 && <div style={{ marginTop: 3 }}><Tags tags={t.tags} /></div>}</td>
+                {all.slice().sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)).slice(0, 150).map((t) => {
+                  const logLen = Array.isArray((t.state as { log?: unknown[] } | null)?.log) ? (t.state as { log: unknown[] }).log.length : 0;
+                  return (
+                  <tr key={t.id} className="row-click" onClick={() => setOpenMsg(t.id)}>
+                    <td><div className="mono" style={{ fontSize: 12 }}>{t.type}{t.schedule_id ? <span style={{ color: "var(--scheduled)" }}> ⟳</span> : null}{logLen > 0 ? <span style={{ color: "var(--txt-3)", fontSize: 10 }}> · {logLen} report{logLen === 1 ? "" : "s"}</span> : null}</div>{t.tags.length > 0 && <div style={{ marginTop: 3 }}><Tags tags={t.tags} /></div>}</td>
                     <td><StatusPill status={t.status} /></td>
                     <td className="mono" style={{ fontSize: 11 }}>{t.assigned_agent_name ?? "—"}</td>
                     <td className="num">{t.priority}</td>
                     <td className="num">{compactNum(t.metrics?.total_tokens ?? 0)}</td>
                     <td className="mono" style={{ fontSize: 11 }}>{ago(t.created_at)}</td>
-                    <td>{(t.status === "RUNNING" || t.status === "CLAIMED") && <button className="btn sm ghost danger" disabled={busy === t.id} onClick={() => stop(t.id)}>Stop</button>}</td>
+                    <td onClick={(e) => e.stopPropagation()}>{(t.status === "RUNNING" || t.status === "CLAIMED") && <button className="btn sm ghost danger" disabled={busy === t.id} onClick={() => stop(t.id)}>Stop</button>}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -186,6 +197,12 @@ export function TopicPage({ topicId, sub, live }: { topicId: string; sub: string
       )}
 
       {sub === "calendar" && <Calendar live={live} initialProject={topicId} />}
+
+      {openMsg && msgDetail.data && (
+        <Drawer title={msgDetail.data.type} tag={`#${shortId(msgDetail.data.id)}`} onClose={() => setOpenMsg(null)}>
+          <MessageDetail task={msgDetail.data} />
+        </Drawer>
+      )}
 
       {reassign && (
         <Modal title="Reassign message" tag={reassign.type} onClose={() => setReassign(null)}>

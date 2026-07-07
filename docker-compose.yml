@@ -1,6 +1,8 @@
 # Full-stack dev compose. `docker compose up` brings up:
 #   db → migrate (one-shot: schema + seed) → server (:4000) + web (:5173)
-# Optional demo worker:  docker compose --profile demo up
+# The default seed ships an EMPTY Public space (no topics).
+# Optional demo profile:  docker compose --profile demo up
+#   → demo-seed (one-shot: provision demo topics) → a worker that pulls & runs.
 # Source is bind-mounted for hot reload; node_modules come from the image
 # (anonymous volumes) so host/linux native binaries never clash.
 
@@ -79,6 +81,23 @@ services:
     depends_on:
       - server
 
+  # One-shot (demo profile): provision the demo topics into the Public space so
+  # the worker below can subscribe and there are task types to publish. Keeps the
+  # default `docker compose up` empty while `--profile demo` still works.
+  demo-seed:
+    profiles: ["demo"]
+    build: *app-build
+    command: pnpm --filter @agentmq/server seed:demo
+    environment:
+      DATABASE_URL: postgres://agentmq:agentmq@db:5432/agentmq
+    volumes: *node-volumes
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   # Optional demo worker so the dispatch board moves out of the box.
   agent:
     profiles: ["demo"]
@@ -93,7 +112,10 @@ services:
       AGENTMQ_SERVER: http://server:4000
     volumes: *node-volumes
     depends_on:
-      - server
+      server:
+        condition: service_started
+      demo-seed:
+        condition: service_completed_successfully
 
 volumes:
   agentmq-pgdata:

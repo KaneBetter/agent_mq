@@ -32,7 +32,8 @@ ${color.bold("COMMANDS")}
   complete <task_id>     Report a task result
   fail <task_id>         Report a task failure (shortcut for complete --status failure)
   run                    Worker loop: heartbeat -> claim -> dispatch -> complete
-  schedule install       Install a local recurring "run --once" (launchd/cron)
+  updates                Read the site's news timeline (the connect-step poll)
+  schedule install       Install a local recurring poll (launchd/cron)
   schedule list          List installed mq launchd/cron entries on this machine
 
 ${color.bold("GLOBAL FLAGS")}
@@ -87,10 +88,17 @@ ${color.bold("run")}
   --concurrency <k>      Max concurrent tasks (default = agent's max_concurrency).
   --allow-shell          Enable the shell.command handler (disabled by default).
 
+${color.bold("updates")}
+  --limit <n>            Optional. Max updates to print (default 50).
+  --server <url>
+  (uses the saved agent token if registered, else the login session)
+
 ${color.bold("schedule install")}
-  --interval <sec>       Required. Seconds between runs of \`agent-mq run --once\`.
-  --project <name>       Optional. Poll this project (label defaults to project-<name>).
-                          Omit for the daily site-wide poll (label defaults to site-update).
+  --interval <sec>       Required. Seconds between polls.
+  --project <name>       Topic poll: claim work on one topic (label project-<name>). Use 3600 (1h).
+  --space <slug>         Space poll: claim work across a space (label space-<slug>). Use 86400 (24h).
+                          Omit both --project and --space for the site poll, which READS the
+                          news timeline (\`agent-mq updates\`, label site-update). Use 86400 (24h).
   --label <l>            Optional. Override the derived label.
   --dry-run              Print what would be written; write nothing.
   --server <url>         Baked into the installed command's --server flag.
@@ -98,17 +106,16 @@ ${color.bold("schedule install")}
 ${color.bold("schedule list")}
   (no flags — lists installed launchd (macOS) / cron (Linux) mq entries)
 
-${color.bold("EXAMPLES")}
-  agent-mq login --server http://localhost:4000
-  agent-mq whoami
-  agent-mq register --name mac-01 --space my-team --caps shell,gpu --owner alice --project research
-  agent-mq subscribe --project research
-  agent-mq run
-  agent-mq run --once --allow-shell
-  agent-mq schedule install --interval 86400
-  agent-mq schedule install --interval 60 --project research
+${color.bold("EXAMPLES")} — the consumer lifecycle, one command per step
+  agent-mq login --server http://localhost:4000                    # 1. connect the machine
+  agent-mq schedule install --interval 86400                       #    → 24h news poll (reads updates)
+  agent-mq register --name mac-01 --space my-team --caps shell,gpu  # 3. register agent to a space
+  agent-mq schedule install --interval 86400 --space my-team       #    → 24h space poll
+  agent-mq subscribe --project research                            # 4. register consumer to a topic
+  agent-mq schedule install --interval 3600 --project research     #    → 1h topic poll
+  agent-mq run                                                     #    run the worker loop
+  agent-mq updates                                                 #    read the news timeline now
   agent-mq schedule list
-  agent-mq logout
 `;
 
 function printHelp(): void {
@@ -410,6 +417,30 @@ async function cmdRun(flags: Map<string, string | true>): Promise<void> {
   await runWorker(api, agentId, { once, intervalSec, concurrency, allowShell });
 }
 
+async function cmdUpdates(flags: Map<string, string | true>): Promise<void> {
+  const config = await loadConfig();
+  const server = resolveServer(getString(flags, "server"), config.server);
+  const session = sessionFromConfig(config);
+  const api = new ApiClient({
+    server,
+    apiToken: config.api_token,
+    sessionToken: session?.session_token,
+  });
+  const limit = getNumber(flags, "limit");
+
+  const updates = await api.listUpdates(limit);
+  if (updates.length === 0) {
+    info("no site updates yet");
+    return;
+  }
+  info(`${updates.length} update${updates.length === 1 ? "" : "s"} from ${server}:`);
+  for (const update of updates) {
+    const day = update.published_at.slice(0, 10);
+    ok(`[${update.category}] ${color.bold(update.title)}  ${color.dim(day)}`);
+    if (update.body) process.stdout.write(`    ${update.body}\n`);
+  }
+}
+
 async function cmdScheduleInstall(flags: Map<string, string | true>): Promise<void> {
   const intervalSec = getNumber(flags, "interval");
   if (intervalSec === undefined) {
@@ -417,14 +448,31 @@ async function cmdScheduleInstall(flags: Map<string, string | true>): Promise<vo
     process.exit(1);
   }
   const project = getString(flags, "project");
+  const space = getString(flags, "space");
+  // A value-less `--project`/`--space` would otherwise silently fall through to
+  // the site (updates) poll — reject it explicitly.
+  if (getBool(flags, "project") && project === undefined) {
+    fail("--project requires a value (a topic name)");
+    process.exit(1);
+  }
+  if (getBool(flags, "space") && space === undefined) {
+    fail("--space requires a value (a space slug/id)");
+    process.exit(1);
+  }
   const label = getString(flags, "label");
   const dryRun = getBool(flags, "dry-run");
   const config = await loadConfig();
   const server = resolveServer(getString(flags, "server"), config.server);
 
+  // No --project and no --space → the connect-step site poll, which READS the
+  // news timeline (`agent-mq updates`). A space or topic poll claims work.
+  const mode = project || space ? "run" : "updates";
+
   const result = await installSchedule({
     intervalSec,
     project,
+    space,
+    mode,
     label,
     dryRun,
     server,
@@ -465,7 +513,7 @@ async function cmdSchedule(subcommand: string | undefined, flags: Map<string, st
       await cmdScheduleList();
       break;
     default:
-      fail(`usage: agent-mq schedule install --interval <sec> [--project <name>] [--label <l>] [--dry-run]`);
+      fail(`usage: agent-mq schedule install --interval <sec> [--project <name> | --space <slug>] [--label <l>] [--dry-run]`);
       fail(`   or: agent-mq schedule list`);
       process.exit(1);
   }
@@ -533,6 +581,9 @@ async function main(): Promise<void> {
       }
       case "run":
         await cmdRun(flags);
+        break;
+      case "updates":
+        await cmdUpdates(flags);
         break;
       case "schedule":
         await cmdSchedule(positionals[0], flags);

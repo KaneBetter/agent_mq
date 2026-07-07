@@ -7,7 +7,15 @@ import { Drawer, Panel, StatusPill, Tags } from "../components/ui";
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export function Calendar({ live, initialProject }: { live: boolean; initialProject?: string }) {
+export function Calendar({
+  live,
+  initialProject,
+  spaceId,
+}: {
+  live: boolean;
+  initialProject?: string;
+  spaceId?: string | null;
+}) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -20,9 +28,14 @@ export function Calendar({ live, initialProject }: { live: boolean; initialProje
   const to = grid[grid.length - 1].key;
 
   const projects = usePoll(() => api.projects(), [], 0);
+  // At space level, the "all topics" option and dropdown are scoped to this space.
+  const topicOptions = useMemo(
+    () => (projects.data ?? []).filter((p) => !spaceId || p.space_id === spaceId),
+    [projects.data, spaceId]
+  );
   const cal = usePoll(
-    () => api.calendar({ project_id: projectId, from, to }),
-    [projectId, from, to],
+    () => api.calendar({ project_id: projectId, space_id: spaceId ?? undefined, from, to }),
+    [projectId, spaceId, from, to],
     live ? 4000 : 0
   );
 
@@ -58,7 +71,7 @@ export function Calendar({ live, initialProject }: { live: boolean; initialProje
           <div className="filters">
             <select className="select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
               <option value="">all topics</option>
-              {(projects.data ?? []).map((p) => (
+              {topicOptions.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
@@ -82,6 +95,7 @@ export function Calendar({ live, initialProject }: { live: boolean; initialProje
             const failed = day?.failed ?? 0;
             const published = day?.published ?? 0;
             const scheduled = day?.scheduled ?? [];
+            const occurrences = day?.occurrences ?? [];
             const h = (v: number) => `${Math.max(v > 0 ? 3 : 0, (v / maxActivity) * 20)}px`;
             return (
               <div
@@ -92,6 +106,9 @@ export function Calendar({ live, initialProject }: { live: boolean; initialProje
                 <div className="cal-daynum">
                   {cell.date.getDate()}
                   {scheduled.length > 0 && <span className="fut">◷{scheduled.length}</span>}
+                  {occurrences.length > 0 && (
+                    <span className="fut recur" title="recurring schedule occurrences">↻{occurrences.length}</span>
+                  )}
                 </div>
                 {scheduled.length > 0 && (
                   <div className="cal-sched">
@@ -155,6 +172,24 @@ export function Calendar({ live, initialProject }: { live: boolean; initialProje
                     </div>
                   ))}
                 </div>
+              )}
+              {selectedDay.occurrences.length > 0 && (
+                <>
+                  <div className="section-label" style={{ marginTop: 18 }}>
+                    Recurring occurrences ({selectedDay.occurrences.length})
+                  </div>
+                  <div className="stack" style={{ gap: 8 }}>
+                    {selectedDay.occurrences.map((o, i) => (
+                      <div key={`${o.schedule_id}-${i}`} style={{ border: "1px solid var(--line)", borderRadius: "var(--radius)", padding: 10 }}>
+                        <div className="rowflex">
+                          <span className="mono" style={{ color: "var(--txt-0)" }}>{o.type}</span>
+                          <span className="mono" style={{ marginLeft: "auto", color: "var(--scheduled)" }}>↻ {hm(o.at)}</span>
+                        </div>
+                        <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>{o.schedule_name}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
             </>
           ) : (

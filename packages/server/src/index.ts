@@ -23,8 +23,10 @@ import { registerHealthRoutes } from "./routes/health.js";
 import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerAgentScheduleRoutes } from "./routes/agentSchedules.js";
 import { registerOnboardingRoutes } from "./routes/onboarding.js";
+import { registerUpdateRoutes } from "./routes/updates.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerSpaceRoutes } from "./routes/spaces.js";
+import { registerJoinRequestRoutes } from "./routes/joinRequests.js";
 import { registerMeRoutes } from "./routes/me.js";
 
 async function main(): Promise<void> {
@@ -41,6 +43,7 @@ async function main(): Promise<void> {
 
   registerAuthRoutes(app);
   registerSpaceRoutes(app);
+  registerJoinRequestRoutes(app);
   registerMeRoutes(app);
   registerAgentRoutes(app);
   registerSubscriptionRoutes(app);
@@ -58,6 +61,7 @@ async function main(): Promise<void> {
   registerScheduleRoutes(app);
   registerAgentScheduleRoutes(app);
   registerOnboardingRoutes(app);
+  registerUpdateRoutes(app);
 
   app.setNotFoundHandler((request, reply) => {
     reply.code(404).send({ error: `Not found: ${request.method} ${request.url}` });

@@ -289,3 +289,45 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS space_id uuid REFERENCES spaces(id) 
 CREATE INDEX IF NOT EXISTS agents_space_idx ON agents(space_id);
 -- Enforce a single platform-wide public space via a partial unique index on visibility.
 CREATE UNIQUE INDEX IF NOT EXISTS spaces_single_public_uidx ON spaces((visibility)) WHERE visibility = 'public';
+
+-- ── v7: agent lifecycle flow — space-level poll, news timeline, join requests ─
+
+-- The 24h "register agent to a space" poll. project_id stays NULL for these;
+-- space_id carries the scope. kind is now 'site_update' | 'space_poll' | 'project_poll'.
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS space_id uuid REFERENCES spaces(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS agent_schedules_space_idx ON agent_schedules(space_id);
+-- One space_poll per (agent, space); the table UNIQUE can't enforce it because
+-- project_id is NULL for space_poll rows (NULLs are distinct), so use a partial index.
+CREATE UNIQUE INDEX IF NOT EXISTS agent_schedules_space_uidx
+  ON agent_schedules(agent_id, space_id) WHERE kind = 'space_poll';
+
+-- The site's update "news timeline". A connected agent reads this on its 24h
+-- site_update poll (`agent-mq updates`); the console renders it as "Updates".
+CREATE TABLE IF NOT EXISTS site_updates (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title        text NOT NULL,
+  body         text NOT NULL DEFAULT '',
+  category     text NOT NULL DEFAULT 'announcement'
+                 CHECK (category IN ('release','announcement','incident','deprecation')),
+  published_at timestamptz NOT NULL DEFAULT now(),
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS site_updates_published_idx ON site_updates(published_at DESC);
+
+-- Self-service "apply to join a space". Approving grants membership; neither
+-- applying nor approving ever creates a schedule task.
+CREATE TABLE IF NOT EXISTS space_join_requests (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  space_id    uuid NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+  user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status      text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','denied')),
+  message     text NOT NULL DEFAULT '',
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  decided_at  timestamptz,
+  decided_by  uuid REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS space_join_requests_space_idx ON space_join_requests(space_id, status);
+-- At most one live (pending) request per (space, user); re-applying after a
+-- decision is allowed because decided rows fall outside this partial index.
+CREATE UNIQUE INDEX IF NOT EXISTS space_join_requests_pending_uidx
+  ON space_join_requests(space_id, user_id) WHERE status = 'pending';

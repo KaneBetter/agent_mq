@@ -14,15 +14,21 @@ import { TopicPage } from "./views/TopicPage";
 import { Members } from "./views/Members";
 import { Activity } from "./views/Activity";
 import { MyWork } from "./views/MyWork";
+import { Calendar } from "./views/Calendar";
+import { Lifecycle } from "./views/Lifecycle";
+import { Updates } from "./views/Updates";
 
 // Level-1 nav (space-global). Level-2 (per-topic) is rendered when inside a topic.
 const NAV1: { to: string; label: string; glyph: string }[] = [
   { to: "/", label: "Overview", glyph: "⊞" },
+  { to: "/start", label: "Get started", glyph: "◆" },
   { to: "/me", label: "My work", glyph: "◉" },
   { to: "/topics", label: "Topics", glyph: "◈" },
   { to: "/consumers", label: "Consumers", glyph: "▤" },
   { to: "/members", label: "Members", glyph: "◱" },
+  { to: "/updates", label: "Updates", glyph: "🛰" },
   { to: "/activity", label: "Activity", glyph: "≋" },
+  { to: "/calendar", label: "Calendar", glyph: "◷" },
 ];
 
 const NAV2: { sub: string; to: (id: string) => string; label: string; glyph: string }[] = [
@@ -170,8 +176,12 @@ function Shell() {
             <TopicPage key={topicId} topicId={topicId} sub={sub} live={live} />
           ) : section === "/" && path === "/" ? (
             <Overview events={events} live={live} spaceId={current?.id ?? null} />
+          ) : section === "/start" ? (
+            <Lifecycle />
           ) : section === "/me" ? (
             <MyWork live={live} />
+          ) : section === "/updates" ? (
+            <Updates live={live} />
           ) : section === "/topics" ? (
             <TopicsGrid live={live} />
           ) : section === "/consumers" ? (
@@ -180,6 +190,8 @@ function Shell() {
             <Members live={live} />
           ) : section === "/activity" ? (
             <Activity key={`act-${current?.id ?? "all"}`} live={live} spaceId={current?.id ?? null} />
+          ) : section === "/calendar" ? (
+            <Calendar key={`cal-${current?.id ?? "all"}`} live={live} spaceId={current?.id ?? null} />
           ) : (
             <div className="empty-state"><div className="big">⌕</div>no such page — <Link to="/">go to broker</Link></div>
           )}

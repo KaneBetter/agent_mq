@@ -441,3 +441,68 @@ label.fld > span { display: block; font-family: var(--font-body); font-size: 10p
 @keyframes indet { 0% { transform: translateX(-100%); width: 40%; } 50% { width: 65%; } 100% { transform: translateX(280%); width: 40%; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinner { width: 15px; height: 15px; border: 2px solid var(--line-2); border-top-color: var(--amber); border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; }
+
+/* ── lifecycle flow (Get started) ─────────────────────────────────────────── */
+.flow { list-style: none; margin: 0; padding: 0; }
+.flow-step { position: relative; display: flex; gap: 14px; padding-bottom: 20px; }
+.flow-step:not(:last-child)::before {
+  content: ""; position: absolute; left: 14px; top: 34px; bottom: 0; width: 2px; background: var(--line);
+}
+.flow-num {
+  flex: none; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; font-family: var(--font-display); font-weight: 700; font-size: 13px;
+  background: var(--bg-1); border: 2px solid var(--line-2); color: var(--txt-1); position: relative; z-index: 1;
+}
+.flow-body { flex: 1; min-width: 0; }
+.flow-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 3px; }
+.flow-glyph { font-size: 15px; }
+.flow-title { font-family: var(--font-display); font-weight: 600; font-size: 14px; color: var(--txt-1); }
+.flow-blurb { color: var(--txt-2); font-size: 12px; margin-bottom: 9px; max-width: 620px; line-height: 1.5; }
+.flow-cmd { display: flex; align-items: stretch; gap: 8px; }
+.flow-badge {
+  margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; padding: 2px 9px; border-radius: 20px;
+  border: 1px solid var(--line-2); color: var(--txt-2); white-space: nowrap;
+}
+.flow-num.tone-news, .flow-badge.tone-news { border-color: var(--amber); color: var(--amber); }
+.flow-num.tone-space, .flow-badge.tone-space { border-color: var(--teal-2); color: var(--teal-2); }
+.flow-num.tone-topic, .flow-badge.tone-topic { border-color: var(--amber-2); color: var(--amber-2); }
+.flow-num.tone-none { border-color: var(--line-2); color: var(--txt-2); }
+.flow-badge.tone-none { border-style: dashed; }
+
+/* ── news timeline (Updates) ──────────────────────────────────────────────── */
+.timeline { list-style: none; margin: 0; padding: 0; }
+.timeline-item { position: relative; display: flex; gap: 14px; padding-bottom: 16px; padding-left: 2px; }
+.timeline-item:not(:last-child)::before {
+  content: ""; position: absolute; left: 6px; top: 16px; bottom: 0; width: 2px; background: var(--line);
+}
+.timeline-dot { flex: none; width: 11px; height: 11px; border-radius: 50%; margin-top: 4px; position: relative; z-index: 1; box-shadow: 0 0 0 3px var(--bg-1); }
+.timeline-body { flex: 1; min-width: 0; }
+.timeline-title { font-family: var(--font-display); font-weight: 600; font-size: 13px; color: var(--txt-1); }
+.timeline-text { color: var(--txt-2); font-size: 12px; margin-top: 4px; line-height: 1.55; max-width: 620px; }
+.badge {
+  font-family: var(--font-mono); font-size: 10px; padding: 1px 7px; border-radius: 20px;
+  border: 1px solid var(--line-2); text-transform: uppercase; letter-spacing: 0.03em;
+}
+
+/* ── message detail: progress bar + agent interaction log ─────────────────── */
+.msg-progress {
+  position: relative; height: 16px; border-radius: 8px; background: var(--bg-3);
+  border: 1px solid var(--line); overflow: hidden; margin-bottom: 16px;
+}
+.msg-progress-fill { position: absolute; inset: 0 auto 0 0; background: var(--amber); transition: width 0.4s ease; }
+.msg-progress-label {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 10px; color: var(--txt-1); mix-blend-mode: difference;
+}
+.msg-log { list-style: none; margin: 0; padding: 0; }
+.msg-log-item { position: relative; display: flex; gap: 12px; padding: 0 0 12px 2px; }
+.msg-log-item:not(:last-child)::before {
+  content: ""; position: absolute; left: 5px; top: 14px; bottom: 0; width: 2px; background: var(--line);
+}
+.msg-log-dot {
+  flex: none; width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; background: var(--teal-2);
+  position: relative; z-index: 1; box-shadow: 0 0 0 3px var(--bg-1);
+}
+.msg-log-body { flex: 1; min-width: 0; }
+.msg-log-t { font-size: 10px; color: var(--txt-3); }
+.msg-log-msg { font-size: 12.5px; color: var(--txt-1); line-height: 1.5; word-break: break-word; }

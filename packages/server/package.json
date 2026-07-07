@@ -8,7 +8,8 @@
     "start": "tsx src/index.ts",
     "migrate": "tsx src/migrate.ts",
     "seed": "tsx src/seed.ts",
-    "demo": "tsx src/demo.ts",
+    "seed:demo": "tsx src/seedDemo.ts",
+    "demo": "tsx src/seedDemo.ts && tsx src/demo.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

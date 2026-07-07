@@ -23,6 +23,10 @@ import { fileURLToPath } from "node:url";
 export interface ScheduleInstallOptions {
   intervalSec: number;
   project?: string;
+  space?: string;
+  // "run"     — claim work (`agent-mq run --once`); used for space + topic polls.
+  // "updates" — read the site's news timeline (`agent-mq updates`); the connect-step poll.
+  mode?: "run" | "updates";
   label?: string;
   dryRun: boolean;
   server?: string;
@@ -53,10 +57,15 @@ function assertSafeToken(value: string, fieldName: string): string {
   return value;
 }
 
-/** Derive a default label from the project name (or "site-update" when polling the whole site). */
-export function deriveLabel(project: string | undefined, explicit: string | undefined): string {
+/** Derive a default label: topic poll → project-<name>, space poll → space-<name>, else site-update. */
+export function deriveLabel(
+  project: string | undefined,
+  space: string | undefined,
+  explicit: string | undefined,
+): string {
   if (explicit) return assertSafeToken(explicit, "--label");
   if (project) return assertSafeToken(`project-${project}`, "derived label");
+  if (space) return assertSafeToken(`space-${space}`, "derived label");
   return "site-update";
 }
 
@@ -72,7 +81,7 @@ export function deriveLabel(project: string | undefined, explicit: string | unde
  * checkout (and its `pnpm install`ed node_modules) stays in place at the path
  * captured at install time — documented in the printed output and ONBOARDING.md.
  */
-export function resolveRunOnceCommand(extraArgs: string[]): string[] {
+export function resolveCliCommand(subcommand: string[], extraArgs: string[]): string[] {
   const thisFile = fileURLToPath(import.meta.url);
   const agentSrcDir = path.dirname(thisFile); // .../packages/agent/src
   const agentPkgDir = path.dirname(agentSrcDir); // .../packages/agent
@@ -83,7 +92,16 @@ export function resolveRunOnceCommand(extraArgs: string[]): string[] {
     ".bin",
     process.platform === "win32" ? "tsx.cmd" : "tsx",
   );
-  return [tsxBin, cliPath, "run", "--once", ...extraArgs];
+  return [tsxBin, cliPath, ...subcommand, ...extraArgs];
+}
+
+/** The CLI subcommand the installed job runs: read the news feed, or claim work. */
+function subcommandFor(options: ScheduleInstallOptions): string[] {
+  return options.mode === "updates" ? ["updates"] : ["run", "--once"];
+}
+
+function resolveScheduledCommand(options: ScheduleInstallOptions): string[] {
+  return resolveCliCommand(subcommandFor(options), buildRunArgs(options));
 }
 
 function buildRunArgs(options: ScheduleInstallOptions): string[] {
@@ -134,8 +152,8 @@ ${programArguments}
 async function installDarwin(
   options: ScheduleInstallOptions,
 ): Promise<ScheduleInstallResult> {
-  const label = deriveLabel(options.project, options.label);
-  const command = resolveRunOnceCommand(buildRunArgs(options));
+  const label = deriveLabel(options.project, options.space, options.label);
+  const command = resolveScheduledCommand(options);
   const content = buildPlist(label, command, options.intervalSec);
   const targetPath = path.join(LAUNCH_AGENTS_DIR, `${PLIST_PREFIX}${label}.plist`);
   const undoHint = `launchctl unload -w ${targetPath} && rm ${targetPath}`;
@@ -197,12 +215,28 @@ function intervalToCronSchedule(intervalSec: number): { expr: string; note?: str
     if (hours < 24) return { expr: `0 */${hours} * * *` };
     if (hours % 24 === 0) return { expr: `0 0 */${hours / 24} * *` };
   }
-  if (60 % minutes === 0) {
-    return { expr: `*/${minutes} * * * *` };
+  // A `*/N` step in the minute field is only valid for N in 1..59, so only use it
+  // when the interval is under an hour. Anything larger that isn't a whole number
+  // of hours is rounded to the nearest hour/day (with an honest note) — never
+  // emitting an out-of-range `*/N` that cron would reject or misinterpret.
+  if (minutes < 60) {
+    if (60 % minutes === 0) return { expr: `*/${minutes} * * * *` };
+    return {
+      expr: `*/${minutes} * * * *`,
+      note: `--interval ${intervalSec}s (~${minutes}m) is not a clean divisor of 60 minutes; cron resets the step each hour, so cadence may drift.`,
+    };
   }
+  const hours = Math.max(1, Math.round(minutes / 60));
+  if (hours < 24) {
+    return {
+      expr: `0 */${hours} * * *`,
+      note: `--interval ${intervalSec}s is not a whole number of hours; rounded to every ${hours}h (cron cannot express ${minutes}m in the minute field).`,
+    };
+  }
+  const days = Math.max(1, Math.round(hours / 24));
   return {
-    expr: `*/${minutes} * * * *`,
-    note: `--interval ${intervalSec}s (~${minutes}m) is not a clean divisor of 60 minutes; cron will still fire every ${minutes}m, so actual cadence may drift from the exact interval.`,
+    expr: `0 0 */${days} * *`,
+    note: `--interval ${intervalSec}s rounded to every ${days}d (cron cannot express ${minutes}m exactly).`,
   };
 }
 
@@ -231,12 +265,12 @@ function readCurrentCrontab(): string {
 }
 
 async function installLinux(options: ScheduleInstallOptions): Promise<ScheduleInstallResult> {
-  const label = deriveLabel(options.project, options.label);
-  const command = resolveRunOnceCommand(buildRunArgs(options));
+  const label = deriveLabel(options.project, options.space, options.label);
+  const command = resolveScheduledCommand(options);
   const { expr, note } = intervalToCronSchedule(options.intervalSec);
   const line = buildCronLine(label, expr, command);
   const targetPath = "crontab (current user)";
-  const undoHint = `crontab -l | grep -v '${CRON_MARKER_PREFIX}${label}$' | crontab -   # or: crontab -e`;
+  const undoHint = `crontab -l | grep -vF '${CRON_MARKER_PREFIX}${label}' | crontab -   # or: crontab -e`;
 
   if (options.dryRun) {
     return {
@@ -253,10 +287,12 @@ async function installLinux(options: ScheduleInstallOptions): Promise<ScheduleIn
   await mkdir(path.join(homedir(), ".agent-mq", "logs"), { recursive: true });
 
   const existing = readCurrentCrontab();
-  const marker = `${CRON_MARKER_PREFIX}${label}$`;
+  // Match the label marker LITERALLY (endsWith), not as a regex — a label may
+  // contain '.', which as a regex wildcard would drop an unrelated poll's line.
+  const markerSuffix = `${CRON_MARKER_PREFIX}${label}`;
   const filtered = existing
     .split("\n")
-    .filter((l) => l.trim().length > 0 && !new RegExp(marker.replace(/\$$/, "") + "$").test(l))
+    .filter((l) => l.trim().length > 0 && !l.trimEnd().endsWith(markerSuffix))
     .join("\n");
   const next = (filtered.length > 0 ? filtered + "\n" : "") + line + "\n";
 
@@ -281,6 +317,7 @@ export async function installSchedule(
     throw new Error("--interval must be a positive number of seconds");
   }
   if (options.project) assertSafeToken(options.project, "--project");
+  if (options.space) assertSafeToken(options.space, "--space");
   if (options.label) assertSafeToken(options.label, "--label");
 
   const plat = platform();

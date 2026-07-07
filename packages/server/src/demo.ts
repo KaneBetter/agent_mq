@@ -4,6 +4,10 @@
 import "./env.js";
 
 const SERVER_URL = process.env.AGENTMQ_SERVER ?? `http://localhost:${process.env.SERVER_PORT ?? 4000}`;
+// The admin/publish endpoints require an authenticated user; the streamer runs
+// headless, so it authenticates with the ADMIN_TOKEN bearer (superuser bypass).
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "dev-admin";
+const AUTH_HEADERS = { Authorization: `Bearer ${ADMIN_TOKEN}` };
 const TASK_COUNT = 30;
 const INTERVAL_MS = 250;
 
@@ -115,7 +119,7 @@ interface ProjectDto {
 }
 
 async function fetchProjectIds(): Promise<Map<string, string>> {
-  const response = await fetch(`${SERVER_URL}/api/projects`);
+  const response = await fetch(`${SERVER_URL}/api/projects`, { headers: AUTH_HEADERS });
   if (!response.ok) {
     throw new Error(`Failed to fetch projects: ${response.status} ${await response.text()}`);
   }
@@ -137,7 +141,7 @@ async function publishTask(projectId: string, spec: DemoTaskSpec): Promise<void>
 
   const response = await fetch(`${SERVER_URL}/api/tasks`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...AUTH_HEADERS },
     body: JSON.stringify({
       project_id: projectId,
       type: spec.type,
@@ -161,7 +165,7 @@ async function main(): Promise<void> {
   const projectIds = await fetchProjectIds();
 
   if (projectIds.size === 0) {
-    throw new Error("No projects found. Run `pnpm seed` before `pnpm demo`.");
+    throw new Error("No topics found. Run `pnpm seed:demo` before streaming demo tasks.");
   }
 
   for (let i = 0; i < TASK_COUNT; i++) {

@@ -1,7 +1,9 @@
 import { useState } from "react";
 import type { RegisterAgentResponse } from "@agentmq/shared";
 import { api, API_BASE } from "../api";
+import { usePoll } from "../hooks";
 import { useSpaces } from "../spaceContext";
+import { buildConsumerPrompt } from "../consumerPrompt";
 import { Modal, Tags } from "./ui";
 
 interface Props {
@@ -11,16 +13,32 @@ interface Props {
   onRegistered?: () => void;
 }
 
+const FALLBACK_INSTALL = "git clone <the agent-mq repo> agent_mq && cd agent_mq && pnpm install";
+
 export function RegisterAgentModal({ project, onClose, onRegistered }: Props) {
   const { current } = useSpaces();
+  const onboarding = usePoll(() => api.onboarding(), [], 0);
+  // The consumer is an AI agent by default: hand it a prompt, it self-registers
+  // and runs the loop. "manual" is the escape hatch for a headless machine.
+  const [mode, setMode] = useState<"prompt" | "manual">("prompt");
+  const [caps, setCaps] = useState("cpu");
   const [name, setName] = useState("");
   const [owner, setOwner] = useState("");
-  const [caps, setCaps] = useState("cpu");
   const [concurrency, setConcurrency] = useState(3);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<RegisterAgentResponse | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+
+  const spaceSlug = current?.slug ?? current?.name ?? "Public";
+
+  const consumerPrompt = buildConsumerPrompt({
+    topicName: project?.name ?? "<topic>",
+    spaceSlug,
+    server: API_BASE,
+    caps: caps || "cpu",
+    installCmd: onboarding.data?.install_cmd ?? FALLBACK_INSTALL,
+  });
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -54,12 +72,15 @@ export function RegisterAgentModal({ project, onClose, onRegistered }: Props) {
 
   const runCmd =
     `pnpm agent-mq login --server ${API_BASE}\n` +
+    `pnpm agent-mq schedule install --interval 86400\n` +
     `pnpm agent-mq register --name "${name || "my-machine"}"` +
-    ` --space ${current?.name ?? "Public"}` +
+    ` --space ${spaceSlug}` +
     (owner ? ` --owner "${owner}"` : "") +
     ` --caps ${caps || "cpu"}` +
     (project ? ` --project ${project.name}` : "") +
-    (project ? `\npnpm agent-mq schedule install --interval 60 --project ${project.name}` : "") +
+    `\npnpm agent-mq schedule install --interval 86400 --space ${spaceSlug}` +
+    (project ? `\npnpm agent-mq subscribe --project ${project.name}` : "") +
+    (project ? `\npnpm agent-mq schedule install --interval 3600 --project ${project.name}` : "") +
     `\npnpm agent-mq run`;
 
   return (
@@ -68,8 +89,34 @@ export function RegisterAgentModal({ project, onClose, onRegistered }: Props) {
       tag={project ? `→ ${project.name}` : "global"}
       onClose={onClose}
     >
-      {!done ? (
+      {mode === "prompt" && !done ? (
+        <div>
+          <div className="routing-note" style={{ marginBottom: 16 }}>
+            Give this prompt to your <b>AI coding agent</b> (Claude Code, etc.). It registers itself
+            as a consumer of {project ? <b>{project.name}</b> : <>the current space</>} and runs the
+            loop — pulling messages, doing the <b>real</b> work, reporting progress back to each
+            message, and completing.
+          </div>
+          <label className="fld">
+            <span>capabilities the agent's machine has (comma-sep)</span>
+            <input className="input" placeholder="cpu, gpu, shell" value={caps} onChange={(e) => setCaps(e.target.value)} />
+          </label>
+          <div className="section-label">prompt for your AI agent</div>
+          <pre className="code-preview" style={{ margin: "0 0 14px", maxHeight: 360 }}>{consumerPrompt}</pre>
+          <div className="rowflex" style={{ gap: 10, flexWrap: "wrap" }}>
+            <button className="btn primary" onClick={() => copy(consumerPrompt, "prompt")}>
+              {copied === "prompt" ? "✓ copied" : "Copy prompt for your AI agent"}
+            </button>
+            <button className="btn ghost sm" onClick={() => setMode("manual")}>
+              or register a headless machine manually →
+            </button>
+          </div>
+        </div>
+      ) : !done ? (
         <form onSubmit={submit}>
+          <button type="button" className="btn ghost sm" style={{ marginBottom: 12 }} onClick={() => setMode("prompt")}>
+            ‹ back to the AI-agent prompt
+          </button>
           {project && (
             <div className="routing-note" style={{ marginBottom: 16 }}>
               This consumer will be <b>registered and subscribed to {project.name}</b> in one step,

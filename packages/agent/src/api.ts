@@ -11,6 +11,7 @@ import {
   type ProjectSummary,
   type RegisterAgentRequest,
   type RegisterAgentResponse,
+  type SiteUpdate,
   type SpaceSummary,
   type SubscribeRequest,
   type Subscription,
@@ -244,6 +245,20 @@ export class ApiClient {
   listProjects(): Promise<ProjectSummary[]> {
     return this.request<ProjectSummary[]>("GET", API_ROUTES.projects, {
       session: true,
+    });
+  }
+
+  /**
+   * Read the site's news timeline (the connect-step 24h poll). The endpoint
+   * accepts either the agent's api_token or a user session; send whichever we
+   * hold (both when available) so a rotated api_token still works via the login
+   * cookie. The server tries the session first, then the Bearer token.
+   */
+  listUpdates(limit?: number): Promise<SiteUpdate[]> {
+    const query = limit && Number.isFinite(limit) ? `?limit=${Math.trunc(limit)}` : "";
+    return this.request<SiteUpdate[]>("GET", `${API_ROUTES.updates}${query}`, {
+      auth: Boolean(this.apiToken),
+      session: Boolean(this.sessionToken),
     });
   }
 }

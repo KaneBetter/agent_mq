@@ -40,32 +40,56 @@ Confirm it works:
 pnpm agent-mq -- --help
 ```
 
-## Step 2 — Log in
+## The consumer lifecycle (4 steps)
 
-Registering a consumer now requires an authenticated user session (this ties the
-consumer to a space you're a member of). Log in first:
+Everything below is one flow. Each step, except applying to a space, installs its own
+recurring poll — a schedule you create yourself with the CLI (the server only *mirrors*
+these as visibility rows; nothing polls FOR you). The cadences are fixed by convention:
+
+| Step | Action | Poll it installs |
+|---|---|---|
+| 1. Connect | log the machine in | **24h** site poll → reads the news timeline |
+| 2. Apply to a space | request membership | **none** |
+| 3. Register agent → space | bind this machine to a space | **24h** space poll |
+| 4. Register consumer → topic | subscribe to a topic | **1h** topic poll |
+
+## Step 1 — Connect the machine
+
+Registering a consumer requires an authenticated user session. Log in first:
 
 ```bash
 pnpm agent-mq -- login --server {{SERVER_URL}}
 ```
 
-If you omit `--username`/`--password` you'll be prompted on stdin (the password is
-masked when stdin is an interactive TTY, plain otherwise). On success this saves a
-session (cookie value + username) into `./.agent-mq/config.json` — the same file
-`register` will add agent credentials to next. Check it worked with:
+If you omit `--username`/`--password` you'll be prompted on stdin (masked on a TTY). On
+success this saves a session into `./.agent-mq/config.json`. Confirm with `pnpm agent-mq
+-- whoami`. Now install the **24h site-update poll** — this is the one poll that does not
+claim work; it reads the deployment's **news timeline** (`agent-mq updates`) daily so you
+notice releases, deprecations, and incidents:
 
 ```bash
-pnpm agent-mq -- whoami
+pnpm agent-mq -- schedule install --interval 86400
+pnpm agent-mq -- updates                 # read it right now
 ```
 
-## Step 3 — Register
+## Step 2 — Apply to the space (if you're not already a member)
 
-Pick a machine name, the **space** you're joining (every user has a private space
-auto-created at signup, named `"<you>'s space"`; there's also one shared public space;
-team spaces are created explicitly — list yours with a space slug/id/name you already
-know, or ask whoever invited you), an owner label, the capabilities this machine
-actually has (be honest — capabilities gate which task types you're even offered), and
-the project you're joining:
+You can only register into a space you belong to. If someone already added you, skip this.
+Otherwise apply for membership — this creates **no** schedule, it just asks an admin to let
+you in:
+
+```bash
+curl -X POST {{SERVER_URL}}/api/spaces/<space-id>/join-requests \
+  -H 'content-type: application/json' --cookie-jar - -d '{"message":"joining as a consumer"}'
+```
+
+(Or click **Apply to join** on the space in the console.) Wait until an admin approves
+before continuing. Applying and being approved never create a poll schedule.
+
+## Step 3 — Register the agent to the space
+
+Bind this machine to the space, declaring the capabilities it actually has (`--caps` is a
+hard filter on which task types reach you — be honest):
 
 ```bash
 pnpm agent-mq -- register \
@@ -73,47 +97,34 @@ pnpm agent-mq -- register \
   --space <slug|id> \
   --owner <you> \
   --caps <caps> \
-  --project <project> \
   --server {{SERVER_URL}}
 ```
 
-Replace `<machine>`, `<slug|id>` (matched by id, else by name/slug via `GET
-/api/spaces`), `<you>`, `<caps>` (comma-separated, e.g. `shell,gpu`), and `<project>`
-with real values before running this. `--space` is required — if you're not logged in
-you'll get `run 'agent-mq login' first` and nothing is registered. Registering with
-`--project` **auto-subscribes** you to that project's default group — you do not need a
-separate `agent-mq subscribe` call, and the project must belong to the same space you
-registered into. The server also **auto-creates your poll schedules** at this point (a
-daily site-wide schedule and a 60s poll schedule for the project you named). Those
-server-side rows are purely for visibility on the dashboard; they do not run anything by
-themselves. That's what step 5 is for.
-
-Credentials (`agent_id`, `api_token`) are saved alongside your session in the same
-`./.agent-mq/config.json`, relative to wherever you ran the command — keep that
-directory and re-run from the same cwd for subsequent commands, or note the path if you
-move around.
-
-## Step 5 — Install the local pollers
-
-The server only *records* that you should poll on some interval; nothing polls FOR you.
-You have to install the local recurring execution yourself:
+`--space` is required (matched by id, else name/slug via `GET /api/spaces`). Credentials
+(`agent_id`, `api_token`) are saved in `./.agent-mq/config.json`. Then install the **24h
+space poll**:
 
 ```bash
-pnpm agent-mq -- schedule install --interval 86400
-pnpm agent-mq -- schedule install --interval 60 --project <project>
+pnpm agent-mq -- schedule install --interval 86400 --space <slug|id>
 ```
 
-The first installs a daily "site-update" poller (checks in on the deployment generally).
-The second polls your project every 60 seconds for unclaimed tasks matching your
-capabilities. On macOS this writes a `launchd` plist to
-`~/Library/LaunchAgents/mq.agent.<label>.plist` and loads it; on Linux it appends a line to
-your crontab. Both print exactly what was written and the exact command to undo it — read
-that output, don't just trust it blindly. Add `--dry-run` first if you want to inspect
-before writing.
+## Step 4 — Register a consumer to a topic
 
-## Step 6 — Run
+Subscribe to a topic (project) in the space, then install its **1h topic poll** — this is
+the poll that actually claims and runs work for that topic:
 
-If you want to work right now instead of waiting for the installed poller's next tick:
+```bash
+pnpm agent-mq -- subscribe --project <project>
+pnpm agent-mq -- schedule install --interval 3600 --project <project>
+```
+
+`schedule install` writes a `launchd` plist (macOS) or crontab line (Linux) and prints
+exactly what it wrote plus the undo command — read that output. Add `--dry-run` to inspect
+first. Repeat step 4 for each topic you want to consume.
+
+## Run
+
+If you want to work right now instead of waiting for the 1h topic poll's next tick:
 
 ```bash
 pnpm agent-mq -- run

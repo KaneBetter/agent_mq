@@ -392,13 +392,18 @@ export interface ScheduleOccurrence {
 }
 
 // ── Agent polling schedules (registered on server, run client-side) ────────
-export type AgentScheduleKind = "site_update" | "project_poll";
+// site_update  = read the site's news timeline (global, 24h)
+// space_poll   = poll for work across a space (24h)
+// project_poll = poll for work on one topic (1h)
+export type AgentScheduleKind = "site_update" | "space_poll" | "project_poll";
 export interface AgentSchedule {
   id: string;
   agent_id: string;
   agent_name: string | null;
   project_id: string | null;
   project_name: string | null;
+  space_id: string | null;
+  space_name: string | null;
   kind: AgentScheduleKind;
   interval_seconds: number;
   last_polled_at: string | null;
@@ -422,6 +427,19 @@ export interface OnboardingInfo {
   prompt: string;
 }
 
+// ── Site updates / news timeline (GET /api/updates) ────────────────────────
+// The feed a connected agent reads on its 24h site_update poll (`agent-mq
+// updates`). Also rendered as the "Updates" timeline in the console.
+export type SiteUpdateCategory = "release" | "announcement" | "incident" | "deprecation";
+export interface SiteUpdate {
+  id: string;
+  title: string;
+  body: string;
+  category: SiteUpdateCategory;
+  published_at: string;
+  created_at: string;
+}
+
 /** A persisted activity record (the durable form of a LiveEvent). */
 export interface ActivityRecord extends LiveEvent {
   id: string;
@@ -440,7 +458,7 @@ export interface ScheduledTaskLite {
   status: TaskStatus;
   scheduled_for: string;
 }
-/** Per-day rollup: past activity counts + future scheduled tasks. */
+/** Per-day rollup: past activity counts + future scheduled tasks + recurring-schedule occurrences. */
 export interface CalendarDay {
   date: string; // YYYY-MM-DD (server local)
   activity_total: number;
@@ -448,6 +466,7 @@ export interface CalendarDay {
   failed: number;
   published: number;
   scheduled: ScheduledTaskLite[];
+  occurrences: ScheduleOccurrence[];
 }
 export interface CalendarResponse {
   from: string; // YYYY-MM-DD
@@ -518,6 +537,31 @@ export interface UpdateSpaceRequest {
 }
 export interface AddMemberRequest {
   username: string;
+  role?: SpaceRole;
+}
+
+// ── Space join requests (self-service "apply to join a space") ─────────────
+// Creating/approving a request never creates a schedule task — it only grants
+// membership. Agents/consumers get their poll schedules later, at register.
+export type JoinRequestStatus = "pending" | "approved" | "denied";
+export interface SpaceJoinRequest {
+  id: string;
+  space_id: string;
+  space_name: string;
+  user_id: string;
+  username: string;
+  display_name: string;
+  status: JoinRequestStatus;
+  message: string;
+  created_at: string;
+  decided_at: string | null;
+  decided_by_username: string | null;
+}
+export interface CreateJoinRequestRequest {
+  message?: string;
+}
+export interface DecideJoinRequestRequest {
+  decision: "approved" | "denied";
   role?: SpaceRole;
 }
 
@@ -599,6 +643,7 @@ export const API_ROUTES = {
   calendar: "/api/calendar",
   events: "/api/events",
   health: "/api/health",
+  updates: "/api/updates",
 
   // v5 — auth
   authRegister: "/api/auth/register",
@@ -612,6 +657,12 @@ export const API_ROUTES = {
   space: (id: string) => `/api/spaces/${id}`,
   spaceMembers: (id: string) => `/api/spaces/${id}/members`,
   spaceMember: (id: string, userId: string) => `/api/spaces/${id}/members/${userId}`,
+
+  // spaces — self-service join requests ("apply to join")
+  spaceJoinRequests: (id: string) => `/api/spaces/${id}/join-requests`,
+  spaceJoinRequestDecide: (id: string, requestId: string) =>
+    `/api/spaces/${id}/join-requests/${requestId}`,
+  myJoinRequests: "/api/me/join-requests",
 
   // v5 — agent rest / pause
   agentPause: (id: string) => `/api/agents/${id}/pause`,

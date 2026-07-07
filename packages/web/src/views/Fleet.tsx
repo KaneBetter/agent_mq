@@ -33,8 +33,9 @@ export function Fleet({ live, spaceId }: { live: boolean; spaceId?: string | nul
             <div className="big">▤</div>
             No consumers yet. Register one — or grab the connect prompt from Broker:
             <div className="code-preview" style={{ marginTop: 14, textAlign: "left" }}>
-              pnpm agent-mq register --name mac-01 --owner you --caps shell,gpu --project research{"\n"}
-              pnpm agent-mq schedule install --interval 60 --project research{"\n"}
+              pnpm agent-mq register --name mac-01 --space my-team --owner you --caps shell,gpu{"\n"}
+              pnpm agent-mq subscribe --project research{"\n"}
+              pnpm agent-mq schedule install --interval 3600 --project research{"\n"}
               pnpm agent-mq run
             </div>
           </div>
@@ -152,7 +153,11 @@ export function Fleet({ live, spaceId }: { live: boolean; spaceId?: string | nul
                   {(schedules.data ?? []).map((s) => (
                     <tr key={s.id}>
                       <td className="mono" style={{ fontSize: 11.5 }}>
-                        {s.kind === "site_update" ? "🛰 site update" : `⟳ ${s.project_name ?? "project"}`}
+                        {s.kind === "site_update"
+                          ? "🛰 site update"
+                          : s.kind === "space_poll"
+                            ? `◱ ${s.space_name ?? "space"}`
+                            : `⟳ ${s.project_name ?? "project"}`}
                       </td>
                       <td className="mono" style={{ fontSize: 11 }}>
                         every {s.interval_seconds >= 3600 ? `${Math.round(s.interval_seconds / 3600)}h` : `${Math.round(s.interval_seconds / 60) || 1}m`}

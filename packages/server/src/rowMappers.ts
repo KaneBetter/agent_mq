@@ -206,6 +206,8 @@ export interface AgentScheduleRow {
   agent_name: string | null;
   project_id: string | null;
   project_name: string | null;
+  space_id: string | null;
+  space_name: string | null;
   kind: AgentSchedule["kind"];
   interval_seconds: number;
   last_polled_at: string | null;
@@ -220,6 +222,8 @@ export function mapAgentScheduleRow(row: AgentScheduleRow): AgentSchedule {
     agent_name: row.agent_name,
     project_id: row.project_id,
     project_name: row.project_name,
+    space_id: row.space_id,
+    space_name: row.space_name,
     kind: row.kind,
     interval_seconds: row.interval_seconds,
     last_polled_at: row.last_polled_at,
@@ -228,13 +232,15 @@ export function mapAgentScheduleRow(row: AgentScheduleRow): AgentSchedule {
   };
 }
 
-/** SQL fragment selecting an agent_schedules row joined to agent/project names. */
+/** SQL fragment selecting an agent_schedules row joined to agent/project/space names. */
 export const AGENT_SCHEDULE_SELECT = `
   SELECT
     ags.id, ags.agent_id, a.name AS agent_name,
     ags.project_id, p.name AS project_name,
+    ags.space_id, sp.name AS space_name,
     ags.kind, ags.interval_seconds, ags.last_polled_at, ags.next_poll_at, ags.created_at
   FROM agent_schedules ags
   JOIN agents a ON a.id = ags.agent_id
   LEFT JOIN projects p ON p.id = ags.project_id
+  LEFT JOIN spaces sp ON sp.id = ags.space_id
 `;

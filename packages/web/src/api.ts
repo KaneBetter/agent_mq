@@ -9,8 +9,10 @@ import type {
   CreateProjectRequest,
   CreateRestWindowRequest,
   CreateScheduleRequest,
+  CreateJoinRequestRequest,
   CreateSpaceRequest,
   CreateTaskTypeRequest,
+  DecideJoinRequestRequest,
   EventType,
   Group,
   LoginRequest,
@@ -26,7 +28,9 @@ import type {
   RegisterUserRequest,
   RestWindow,
   Schedule,
+  SiteUpdate,
   SpaceDetail,
+  SpaceJoinRequest,
   SpaceSummary,
   Task,
   TaskDetail,
@@ -138,9 +142,10 @@ export const api = {
     return req<ActivityRecord[]>(`${API_ROUTES.activity}${qs ? `?${qs}` : ""}`);
   },
 
-  calendar: (params: { project_id?: string; from?: string; to?: string } = {}) => {
+  calendar: (params: { project_id?: string; space_id?: string; from?: string; to?: string } = {}) => {
     const q = new URLSearchParams();
     if (params.project_id) q.set("project_id", params.project_id);
+    if (params.space_id) q.set("space_id", params.space_id);
     if (params.from) q.set("from", params.from);
     if (params.to) q.set("to", params.to);
     const qs = q.toString();
@@ -175,6 +180,27 @@ export const api = {
     req<void>(API_ROUTES.spaceMember(id, userId), { method: "DELETE" }),
   setMemberRole: (id: string, userId: string, role: string) =>
     req<SpaceDetail>(API_ROUTES.spaceMember(id, userId), { method: "PATCH", body: JSON.stringify({ role }) }),
+
+  // ── site updates / news timeline ──────────────────────────────────────────
+  updates: (limit?: number) =>
+    req<SiteUpdate[]>(`${API_ROUTES.updates}${limit ? `?limit=${limit}` : ""}`),
+
+  // ── space join requests ("apply to join") ─────────────────────────────────
+  applyToSpace: (id: string, body: CreateJoinRequestRequest = {}) =>
+    req<SpaceJoinRequest>(API_ROUTES.spaceJoinRequests(id), {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  spaceJoinRequests: (id: string, status?: string) =>
+    req<SpaceJoinRequest[]>(
+      `${API_ROUTES.spaceJoinRequests(id)}${status ? `?status=${status}` : ""}`
+    ),
+  decideJoinRequest: (id: string, requestId: string, body: DecideJoinRequestRequest) =>
+    req<SpaceJoinRequest>(API_ROUTES.spaceJoinRequestDecide(id, requestId), {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  myJoinRequests: () => req<SpaceJoinRequest[]>(API_ROUTES.myJoinRequests),
 
   // ── v5: agent rest / pause ────────────────────────────────────────────────
   pauseAgent: (id: string, paused: boolean) =>

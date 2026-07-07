@@ -25,18 +25,20 @@ limit**, and never hands the same task to two machines. See `db/schema.sql` and
 
 ## Run it (Docker — recommended)
 
-Requires Docker. One command brings up Postgres, applies the schema, seeds demo
-projects/task-types, and starts the API (`:4000`) + web console (`:5173`):
+Requires Docker. One command brings up Postgres, applies the schema, seeds the
+demo user + an **empty Public space** (no topics), and starts the API (`:4000`) +
+web console (`:5173`):
 
 ```bash
 docker compose up --build
 # open http://localhost:5173  → hit "Live"
 ```
 
-Add a demo worker so the board actually moves:
+Add the demo profile so the board actually moves — it provisions demo topics
+(research / content / ops / oncall) and a worker that pulls and runs tasks:
 
 ```bash
-docker compose --profile demo up --build   # + a docker-agent that pulls and runs tasks
+docker compose --profile demo up --build   # demo topics + a docker-agent
 ```
 
 Then open the **Publish** tab, set a burst count (e.g. 30), and watch the dispatch board.
@@ -51,7 +53,8 @@ pnpm install
 pnpm db:up            # postgres in docker
 node scripts/wait-for-db.mjs
 pnpm migrate          # apply db/schema.sql
-pnpm seed             # demo projects + task types
+pnpm seed             # demo user + empty Public space
+pnpm seed:demo        # optional: demo topics (research/content/ops/oncall)
 pnpm dev              # server :4000 + web :5173
 
 # in another shell — become a worker (a "colleague machine"):
@@ -60,7 +63,7 @@ pnpm agent-mq subscribe --project research
 pnpm agent-mq subscribe --project content
 pnpm agent-mq run --allow-shell
 
-# in another shell — stream demo work onto the board:
+# in another shell — stream demo work onto the board (self-seeds demo topics):
 pnpm demo
 ```
 

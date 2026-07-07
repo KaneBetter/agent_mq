@@ -3,8 +3,9 @@ import type { TaskStatus } from "@agentmq/shared";
 import { TASK_STATUSES } from "@agentmq/shared";
 import { api } from "../api";
 import { usePoll } from "../hooks";
-import { ago, compactNum, duration, hm, shortId, usd } from "../format";
+import { ago, compactNum, duration, hm, shortId } from "../format";
 import { Drawer, Panel, StatusPill, Tags } from "../components/ui";
+import { MessageDetail } from "../components/MessageDetail";
 
 export function Queue({ live }: { live: boolean }) {
   const [status, setStatus] = useState<TaskStatus | "">("");
@@ -182,79 +183,7 @@ export function Queue({ live }: { live: boolean }) {
             )}
           </div>
 
-          <dl className="kv" style={{ marginBottom: 18 }}>
-            <dt>Topic</dt>
-            <dd style={{ color: "var(--teal)" }}>{d.project_name}</dd>
-            <dt>Consumer</dt>
-            <dd>{d.assigned_agent_name ?? "—"}</dd>
-            <dt>Priority</dt>
-            <dd className="mono">{d.priority}</dd>
-            <dt>Retries</dt>
-            <dd className="mono">
-              {d.retry_count} / {d.max_retries}
-            </dd>
-            <dt>Required caps</dt>
-            <dd className="mono">{d.required_capabilities.join(", ") || "any"}</dd>
-            <dt>Tags</dt>
-            <dd>{d.tags.length ? <Tags tags={d.tags} /> : <span className="muted">none</span>}</dd>
-            {d.scheduled_for && (
-              <>
-                <dt>Scheduled for</dt>
-                <dd className="mono" style={{ color: "var(--scheduled)" }}>
-                  {new Date(d.scheduled_for).toLocaleString()}
-                </dd>
-              </>
-            )}
-            <dt>Created</dt>
-            <dd className="mono" style={{ fontSize: 11 }}>
-              {ago(d.created_at)}
-            </dd>
-            {d.completed_at && (
-              <>
-                <dt>Finished</dt>
-                <dd className="mono" style={{ fontSize: 11 }}>
-                  {ago(d.completed_at)}
-                </dd>
-              </>
-            )}
-            {d.last_error && (
-              <>
-                <dt>Last error</dt>
-                <dd style={{ color: "var(--rose-2)" }}>{d.last_error}</dd>
-              </>
-            )}
-          </dl>
-
-          {d.metrics && (
-            <>
-              <div className="section-label">Metrics</div>
-              <dl className="kv" style={{ marginBottom: 18 }}>
-                <dt>Model</dt>
-                <dd className="mono">{d.metrics.model ?? "—"}</dd>
-                <dt>Tokens</dt>
-                <dd className="mono">
-                  {compactNum(d.metrics.input_tokens)} in · {compactNum(d.metrics.output_tokens)} out ·{" "}
-                  {compactNum(d.metrics.total_tokens)} total
-                </dd>
-                <dt>Wall time</dt>
-                <dd className="mono">{duration(d.metrics.wall_time_ms)}</dd>
-                <dt>Cost</dt>
-                <dd className="mono">{usd(d.metrics.cost_usd)}</dd>
-              </dl>
-            </>
-          )}
-
-          <div className="section-label">Payload</div>
-          <pre className="code-preview">{JSON.stringify(d.payload, null, 2)}</pre>
-
-          {d.result?.output && (
-            <>
-              <div className="section-label" style={{ marginTop: 16 }}>
-                Result
-              </div>
-              <pre className="code-preview">{JSON.stringify(d.result.output, null, 2)}</pre>
-            </>
-          )}
+          <MessageDetail task={d} />
         </Drawer>
       )}
     </>

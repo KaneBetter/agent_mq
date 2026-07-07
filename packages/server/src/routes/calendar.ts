@@ -1,11 +1,25 @@
-// GET /api/calendar: per-day activity rollup + upcoming scheduled tasks.
+// GET /api/calendar: per-day activity rollup + upcoming scheduled tasks +
+// recurring-schedule occurrences projected across the visible date range.
 import type { FastifyInstance } from "fastify";
-import type { CalendarDay, CalendarResponse, ScheduledTaskLite, TaskStatus } from "@agentmq/shared";
+import type {
+  CalendarDay,
+  CalendarResponse,
+  Recurrence,
+  ScheduleOccurrence,
+  ScheduledTaskLite,
+  TaskStatus,
+} from "@agentmq/shared";
 import { query } from "../db.js";
 import { requireUser } from "../userAuth.js";
 import { visibleSpacesClause } from "../spaces.js";
+import { nextRun } from "../scheduling.js";
+
+// Bound the per-schedule projection so a high-frequency schedule (e.g. hourly)
+// over a wide range can't walk unbounded (a month of hourly ≈ 720 occurrences).
+const MAX_OCCURRENCES_PER_SCHEDULE = 800;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
@@ -62,15 +76,27 @@ interface ScheduledRow {
   day: string;
 }
 
+interface ScheduleListRow {
+  id: string;
+  name: string;
+  type: string;
+  recurrence: Recurrence;
+  shift_hours: number | null;
+  next_run_at: string;
+}
+
 export function registerCalendarRoutes(app: FastifyInstance): void {
   app.get<{
-    Querystring: { project_id?: string; from?: string; to?: string };
+    Querystring: { project_id?: string; space_id?: string; from?: string; to?: string };
   }>("/api/calendar", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;
 
-    const { project_id: projectId, from: fromRaw, to: toRaw } = request.query;
+    const { project_id: projectId, space_id: spaceId, from: fromRaw, to: toRaw } = request.query;
 
+    if (spaceId && !UUID_RE.test(spaceId)) {
+      return reply.code(400).send({ error: "space_id must be a UUID" });
+    }
     if (fromRaw && !DATE_RE.test(fromRaw)) {
       return reply.code(400).send({ error: "from must be YYYY-MM-DD" });
     }
@@ -88,11 +114,20 @@ export function registerCalendarRoutes(app: FastifyInstance): void {
 
     try {
       const { clause: spaceClause, params: spaceParams } = visibleSpacesClause(user, 2);
+      // Base params shared by the activity + scheduled queries, in order:
+      // $1 = from, $2 = to, the space-visibility params, then (optionally) space_id.
+      const baseParams: unknown[] = [from, to, ...spaceParams];
+      let projectSpaceFilter = "";
+      if (spaceId) {
+        baseParams.push(spaceId);
+        projectSpaceFilter = ` AND p.space_id = $${baseParams.length}`;
+      }
       const visibleProjectsSubquery = `(
-        SELECT p.id FROM projects p LEFT JOIN spaces sp ON sp.id = p.space_id WHERE ${spaceClause}
+        SELECT p.id FROM projects p LEFT JOIN spaces sp ON sp.id = p.space_id
+        WHERE ${spaceClause}${projectSpaceFilter}
       )`;
 
-      const activityParams: unknown[] = [from, to, ...spaceParams];
+      const activityParams: unknown[] = [...baseParams];
       let activityProjectClause = `AND a.project_id IN ${visibleProjectsSubquery}`;
       if (projectId) {
         activityParams.push(projectId);
@@ -113,7 +148,7 @@ export function registerCalendarRoutes(app: FastifyInstance): void {
         activityParams
       );
 
-      const scheduledParams: unknown[] = [from, to, ...spaceParams];
+      const scheduledParams: unknown[] = [...baseParams];
       let scheduledProjectClause = `AND t.project_id IN ${visibleProjectsSubquery}`;
       if (projectId) {
         scheduledParams.push(projectId);
@@ -135,6 +170,61 @@ export function registerCalendarRoutes(app: FastifyInstance): void {
          ORDER BY t.scheduled_for ASC`,
         scheduledParams
       );
+
+      // Recurring schedules: project each enabled schedule's occurrences across
+      // the [from, to] window (same visibility + project filter as tasks). This
+      // is how an hourly "task insight analysis" schedule shows on the calendar.
+      // Uses its own param list (the window is applied in JS, not SQL, so it must
+      // not carry the unreferenced from/to params that would confuse Postgres).
+      const { clause: scheduleSpaceClause, params: scheduleSpaceParams } = visibleSpacesClause(user, 0);
+      const scheduleParams: unknown[] = [...scheduleSpaceParams];
+      let scheduleSpaceFilter = "";
+      if (spaceId) {
+        scheduleParams.push(spaceId);
+        scheduleSpaceFilter = ` AND p.space_id = $${scheduleParams.length}`;
+      }
+      let scheduleProjectClause = `s.project_id IN (
+        SELECT p.id FROM projects p LEFT JOIN spaces sp ON sp.id = p.space_id
+        WHERE ${scheduleSpaceClause}${scheduleSpaceFilter}
+      )`;
+      if (projectId) {
+        scheduleParams.push(projectId);
+        scheduleProjectClause += ` AND s.project_id = $${scheduleParams.length}`;
+      }
+      const scheduleResult = await query<ScheduleListRow>(
+        `SELECT s.id, s.name, s.type, s.recurrence, s.shift_hours, s.next_run_at
+         FROM schedules s
+         WHERE s.enabled AND ${scheduleProjectClause}`,
+        scheduleParams
+      );
+
+      const windowStartMs = parseDateKey(from).getTime();
+      const windowEndMs = parseDateKey(to).getTime() + 24 * 3_600_000; // exclusive end of the `to` day
+      const occurrencesByDay = new Map<string, ScheduleOccurrence[]>();
+      for (const schedule of scheduleResult.rows) {
+        let cursor = new Date(schedule.next_run_at);
+        for (let i = 0; i < MAX_OCCURRENCES_PER_SCHEDULE; i += 1) {
+          const at = i === 0 ? cursor : nextRun(schedule.recurrence, cursor);
+          cursor = at;
+          const atMs = at.getTime();
+          if (atMs >= windowEndMs) break;
+          if (atMs < windowStartMs) continue;
+          const occurrence: ScheduleOccurrence = {
+            schedule_id: schedule.id,
+            schedule_name: schedule.name,
+            type: schedule.type,
+            at: at.toISOString(),
+            shift_end:
+              schedule.shift_hours !== null && schedule.shift_hours !== undefined
+                ? new Date(atMs + schedule.shift_hours * 3_600_000).toISOString()
+                : null,
+          };
+          const day = toDateKey(at);
+          const list = occurrencesByDay.get(day) ?? [];
+          list.push(occurrence);
+          occurrencesByDay.set(day, list);
+        }
+      }
 
       const activityByDay = new Map<string, ActivityBucketRow>();
       for (const row of activityResult.rows) {
@@ -166,6 +256,7 @@ export function registerCalendarRoutes(app: FastifyInstance): void {
           failed: Number(bucket?.failed ?? 0),
           published: Number(bucket?.published ?? 0),
           scheduled: scheduledByDay.get(date) ?? [],
+          occurrences: occurrencesByDay.get(date) ?? [],
         };
       });
 

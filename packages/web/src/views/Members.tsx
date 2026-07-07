@@ -16,9 +16,20 @@ export function Members({ live }: { live: boolean }) {
   const [role, setRole] = useState<SpaceRole>("member");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [applied, setApplied] = useState(false);
+
+  // my_role is the viewer's effective role (owner is surfaced as "admin"); the
+  // space's owner_id column is NOT the viewer's identity, so don't test it here.
+  const isManager = current?.my_role === "admin";
+  const requests = usePoll(
+    () => (spaceId && isManager ? api.spaceJoinRequests(spaceId, "pending") : Promise.resolve([])),
+    [spaceId, isManager],
+    live ? 6000 : 0
+  );
 
   const d = detail.data;
-  const canManage = current?.my_role === "admin" || current?.owner_id != null; // server enforces; UI hint
+  const canManage = isManager; // server enforces; UI hint
+  const isMember = current?.my_role != null;
 
   if (!current) return <div className="empty-state">select a space</div>;
 
@@ -44,6 +55,17 @@ export function Members({ live }: { live: boolean }) {
     try { await api.updateSpace(spaceId, { visibility: v as "private" | "team" | "public" }); refresh(); detail.refetch(); }
     catch (e) { alert(e instanceof Error ? e.message : String(e)); }
   }
+  async function apply() {
+    if (!spaceId) return;
+    setBusy(true); setMsg(null);
+    try { await api.applyToSpace(spaceId, {}); setApplied(true); setMsg("request submitted — waiting for an admin"); }
+    catch (e) { setMsg(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  }
+  async function decide(requestId: string, decision: "approved" | "denied") {
+    if (!spaceId) return;
+    try { await api.decideJoinRequest(spaceId, requestId, { decision }); requests.refetch(); detail.refetch(); refresh(); }
+    catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+  }
 
   return (
     <div className="stack">
@@ -63,6 +85,43 @@ export function Members({ live }: { live: boolean }) {
           )}
         </div>
       </Panel>
+
+      {!isMember && current.visibility !== "private" && (
+        <Panel title="Join this space" tag="apply for membership" bodyStyle={{ padding: 16 }}>
+          <div className="rowflex" style={{ gap: 12, flexWrap: "wrap" }}>
+            <div className="muted" style={{ fontSize: 12, flex: 1, minWidth: 200 }}>
+              You're not a member yet. Applying asks an admin to let you in — it installs no schedule.
+            </div>
+            <button className="btn primary" disabled={busy || applied} onClick={apply}>
+              {applied ? "✓ request submitted" : "Apply to join"}
+            </button>
+          </div>
+          {msg && <div className="mono" style={{ marginTop: 12, fontSize: 11.5, color: "var(--teal-2)" }}>{msg}</div>}
+        </Panel>
+      )}
+
+      {canManage && (requests.data ?? []).length > 0 && (
+        <Panel title="Pending requests" tag={`${(requests.data ?? []).length}`} bodyStyle={{ padding: 0 }}>
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead><tr><th>User</th><th>Message</th><th>Requested</th><th></th></tr></thead>
+              <tbody>
+                {(requests.data ?? []).map((r) => (
+                  <tr key={r.id}>
+                    <td><div style={{ fontWeight: 600 }}>{r.display_name || r.username}</div><div className="mono" style={{ fontSize: 10, color: "var(--txt-3)" }}>@{r.username}</div></td>
+                    <td className="muted" style={{ fontSize: 12 }}>{r.message || "—"}</td>
+                    <td className="mono" style={{ fontSize: 11 }}>{ago(r.created_at)}</td>
+                    <td className="rowflex" style={{ gap: 6, justifyContent: "flex-end" }}>
+                      <button className="btn sm primary" onClick={() => decide(r.id, "approved")}>approve</button>
+                      <button className="btn sm ghost danger" onClick={() => decide(r.id, "denied")}>deny</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
 
       <Panel title="Members" tag={`${d?.members.length ?? 0}`} bodyStyle={{ padding: 0 }}>
         <div className="tbl-wrap">

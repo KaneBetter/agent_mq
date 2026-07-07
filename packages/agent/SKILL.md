@@ -48,11 +48,13 @@ complete with metrics**. `--once` claims+runs a single task then exits — the m
 `cron` / `launchd` / Task Scheduler so there is no long-lived process to crash.
 
 `schedule install` is that wiring, done for you: it installs a client-side recurring job
-(a `launchd` plist on macOS, a crontab line on Linux) that runs `agent-mq run --once` every
-`--interval` seconds. The server records agent polling schedules for visibility (it upserts
-a daily "site_update" row on register, plus a 60s "project_poll" row per project you
-register/subscribe to) — but the server never triggers anything itself. `schedule install`
-is the executor side of that record: run it once per interval you want honored, on every
+(a `launchd` plist on macOS, a crontab line on Linux) every `--interval` seconds. With no
+`--project`/`--space` it runs `agent-mq updates` (reads the news timeline); with `--space`
+or `--project` it runs `agent-mq run --once` (claims work). One poll per lifecycle step:
+a 24h `site_update` (news), a 24h `space_poll` per space, and a 1h `project_poll` per topic.
+The server mirrors these as visibility rows on register/subscribe but never triggers
+anything itself. `schedule install` is the executor side of that record: run it once per
+interval you want honored, on every
 machine that should actually poll. `--dry-run` prints the plist/crontab content and target
 path without writing anything. `schedule list` shows what's currently installed on this
 machine. Every undo command is printed after install — read it before you forget how you
@@ -99,10 +101,12 @@ That is the whole contract. The queue guarantees exactly-one-consumer per task v
 
 ```bash
 export AGENTMQ_SERVER=http://<server-host>:4000
-agent-mq login                                                     # prompts for username/password
-agent-mq register  --name "$(hostname)" --space <slug|id> --owner you --caps shell,cpu --project research
-agent-mq schedule install --interval 86400                  # daily site-update poll
-agent-mq schedule install --interval 60 --project research  # poll research for work
+agent-mq login                                                     # 1. connect
+agent-mq schedule install --interval 86400                         #    24h news poll (reads updates)
+agent-mq register --name "$(hostname)" --space <slug|id> --owner you --caps shell,cpu  # 3. register → space
+agent-mq schedule install --interval 86400 --space <slug|id>       #    24h space poll
+agent-mq subscribe --project research                              # 4. register consumer → topic
+agent-mq schedule install --interval 3600 --project research       #    1h topic poll
 agent-mq run                       # or rely on the installed schedules above
 ```
 
