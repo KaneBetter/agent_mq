@@ -41,8 +41,25 @@ import type {
 } from "@agentmq/shared";
 import { API_ROUTES } from "@agentmq/shared";
 
-export const API_BASE =
-  import.meta.env.VITE_API_BASE?.replace(/\/$/, "") ?? "http://localhost:4000";
+// Resolve the API origin. An explicit VITE_API_BASE wins (proxied / custom
+// deploys, e.g. a reverse proxy). Otherwise derive it from the browser's
+// current location so the console works when opened from a remote machine —
+// same host as the page, API on VITE_API_PORT (default 4000). Deriving from the
+// live host (never hardcoding "localhost", which points a remote browser at its
+// own machine) also keeps the page and API same-site, so the SameSite=Lax
+// session cookie is stored and re-sent on refresh instead of being dropped.
+function resolveApiBase(): string {
+  const explicit = import.meta.env.VITE_API_BASE?.replace(/\/$/, "");
+  if (explicit) return explicit;
+  const port = import.meta.env.VITE_API_PORT ?? "4000";
+  if (typeof window !== "undefined" && window.location?.hostname) {
+    const { protocol, hostname } = window.location;
+    return `${protocol}//${hostname}:${port}`;
+  }
+  return `http://localhost:${port}`;
+}
+
+export const API_BASE = resolveApiBase();
 
 // NOTE: keep this false until the v5 server's CORS sends Access-Control-Allow-Credentials.
 // Flipping it before then breaks every request (credentialed CORS needs that header).

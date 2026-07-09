@@ -72,9 +72,13 @@ services:
   web:
     build: *app-build
     command: pnpm --filter @agentmq/web dev -- --host 0.0.0.0 --port 5173
+    # No VITE_API_BASE: the console derives the API origin from the browser's
+    # own location (same host as the page, port VITE_API_PORT) so it works when
+    # opened from a remote machine via the host's IP — not just localhost. This
+    # also keeps the page and API same-site, so the session cookie survives a
+    # refresh. Set VITE_API_BASE only for a reverse-proxied / custom-host deploy.
     environment:
-      # Browser runs on the host, so it reaches the API via the published port.
-      VITE_API_BASE: http://localhost:4000
+      VITE_API_PORT: "4000"
     ports:
       - "5173:5173"
     volumes: *node-volumes
