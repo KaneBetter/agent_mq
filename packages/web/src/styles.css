@@ -132,6 +132,14 @@ body {
 }
 .nav-item.active .count { color: var(--amber); background: rgba(201, 120, 26, 0.12); }
 
+/* Nav scrolls on its own so the footer (bus status + user chip) stays pinned
+   and visible even when the nav list is taller than the viewport — otherwise
+   the last item (the username chip) gets clipped below a `overflow:hidden` body. */
+.nav-scroll {
+  display: flex; flex-direction: column; gap: 5px;
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+}
+
 .sidebar-foot {
   margin-top: auto; padding: 12px 8px 2px; border-top: 1px solid var(--line);
   font-family: var(--font-body); font-size: 10.5px; color: var(--txt-3); line-height: 1.7;

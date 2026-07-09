@@ -120,6 +120,7 @@ function Shell() {
 
         <SpaceSwitcher />
 
+        <nav className="nav-scroll">
         {topicId ? (
           <>
             <Link to="/topics" className="nav-item" style={{ color: "var(--txt-2)", fontSize: 11.5 }}>
@@ -143,6 +144,7 @@ function Shell() {
             );
           })
         )}
+        </nav>
 
         <div className="sidebar-foot">
           <div className="conn">
