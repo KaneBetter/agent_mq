@@ -83,7 +83,11 @@ body {
   z-index: 1;
   display: grid;
   grid-template-columns: 238px 1fr;
-  height: 100%;
+  /* Pin the single row to the viewport height (minmax(0,…) lets it shrink so
+     tall content can't grow the row past the screen) — this is what bounds the
+     sidebar so its nav can scroll internally and the footer stays on-screen. */
+  grid-template-rows: minmax(0, 1fr);
+  height: 100dvh;
 }
 
 .sidebar {
@@ -93,6 +97,11 @@ body {
   flex-direction: column;
   padding: 20px 14px;
   gap: 5px;
+  /* Override the grid item's default min-height:auto so it stays bounded to the
+     row instead of growing to fit the nav; overflow:hidden keeps the footer
+     (user chip) inside the viewport — nav-scroll is the only scroll region. */
+  min-height: 0;
+  overflow: hidden;
 }
 
 .brand { display: flex; align-items: center; gap: 11px; padding: 6px 8px 20px; }
@@ -147,7 +156,7 @@ body {
 .sidebar-foot .conn { display: flex; align-items: center; gap: 7px; color: var(--txt-2); }
 
 /* ============================ Main column =============================== */
-.main { display: flex; flex-direction: column; min-width: 0; height: 100%; }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
 
 .topbar {
   height: 58px; flex: none; border-bottom: 1px solid var(--line);
