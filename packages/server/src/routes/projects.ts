@@ -23,7 +23,7 @@ import {
 } from "../rowMappers.js";
 import { nextRun } from "../scheduling.js";
 import { requireUser } from "../userAuth.js";
-import { canProduce, canView, fetchSpace, visibleSpacesClause } from "../spaces.js";
+import { canManage, canProduce, canView, fetchSpace, visibleSpacesClause } from "../spaces.js";
 import { computeAgentResting } from "../rest.js";
 
 interface ProjectRow {
@@ -355,6 +355,41 @@ export function registerProjectRoutes(app: FastifyInstance): void {
     } catch (err) {
       request.log.error(err, "get project detail failed");
       return reply.code(500).send({ error: "Failed to fetch project" });
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/projects/:id", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+
+    const { id } = request.params;
+    try {
+      const projectResult = await query<{ id: string; space_id: string | null }>(
+        `SELECT id, space_id FROM projects WHERE id = $1`,
+        [id]
+      );
+      const row = projectResult.rows[0];
+      if (!row) {
+        return reply.code(404).send({ error: "Topic not found" });
+      }
+
+      // Deleting a topic cascades its groups, subscriptions, tasks and schedules
+      // (all FK ON DELETE CASCADE), so gate it on space admin (canManage) rather
+      // than the looser produce role that is enough to create one.
+      if (row.space_id) {
+        const space = await fetchSpace(row.space_id);
+        if (space && !(await canManage(space, user))) {
+          return reply.code(403).send({ error: "Only a space admin can delete a topic" });
+        }
+      } else if (!user.isAdmin) {
+        return reply.code(403).send({ error: "Not authorized to delete this topic" });
+      }
+
+      await query(`DELETE FROM projects WHERE id = $1`, [id]);
+      return reply.send({ ok: true });
+    } catch (err) {
+      request.log.error(err, "delete project failed");
+      return reply.code(500).send({ error: "Failed to delete topic" });
     }
   });
 }

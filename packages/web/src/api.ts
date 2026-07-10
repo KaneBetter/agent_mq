@@ -67,8 +67,12 @@ export const API_BASE = resolveApiBase();
 const WITH_CREDENTIALS = true;
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  // Only advertise a JSON body when we actually send one: a bodyless mutation
+  // (DELETE, logout, …) carrying Content-Type: application/json makes Fastify
+  // reject the empty body (FST_ERR_CTP_EMPTY_JSON_BODY).
+  const hasBody = init?.body != null;
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    ...(hasBody ? { headers: { "Content-Type": "application/json" } } : {}),
     ...(WITH_CREDENTIALS ? { credentials: "include" as RequestCredentials } : {}),
     ...init,
   });
@@ -100,6 +104,8 @@ export const api = {
   project: (id: string) => req<ProjectDetail>(API_ROUTES.project(id)),
   createProject: (body: CreateProjectRequest) =>
     req<Project>(API_ROUTES.projects, { method: "POST", body: JSON.stringify(body) }),
+  deleteProject: (id: string) =>
+    req<{ ok: true }>(API_ROUTES.project(id), { method: "DELETE" }),
 
   schedules: (projectId?: string) => {
     const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";

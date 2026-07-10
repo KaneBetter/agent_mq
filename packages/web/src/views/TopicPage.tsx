@@ -4,6 +4,8 @@ import { api } from "../api";
 import { usePoll } from "../hooks";
 import { ago, compactNum, hm, recurrenceLabel, shortId } from "../format";
 import { useModals } from "../modals";
+import { useRouter } from "../router";
+import { useSpaces } from "../spaceContext";
 import { AgentPill, Caps, Drawer, Modal, Panel, StatusPill, Tags } from "../components/ui";
 import { ActivityStream } from "../components/ActivityStream";
 import { MessageDetail } from "../components/MessageDetail";
@@ -17,13 +19,19 @@ function consumeOrder(a: TaskDetail, b: TaskDetail): number {
 function isScheduledFuture(t: TaskDetail): boolean {
   return !!t.scheduled_for && new Date(t.scheduled_for).getTime() > Date.now();
 }
+function pl(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
 
 export function TopicPage({ topicId, sub, live }: { topicId: string; sub: string; live: boolean }) {
   const { openRegister, openSchedule } = useModals();
+  const { navigate } = useRouter();
+  const { spaces, refresh: refreshSpaces } = useSpaces();
   const { data, error, refetch } = usePoll(() => api.project(topicId), [topicId], live ? 3000 : 9000);
   const tasks = usePoll(() => api.tasks({ project_id: topicId, limit: 250 }), [topicId], live ? 2500 : 9000);
   const activity = usePoll(() => api.activity({ project_id: topicId, limit: 80 }), [topicId], live ? 3000 : 9000);
   const [busy, setBusy] = useState<string | null>(null);
+  const [confirmDel, setConfirmDel] = useState(false);
   const [reassign, setReassign] = useState<TaskDetail | null>(null);
   const [openMsg, setOpenMsg] = useState<string | null>(null);
   // Live-poll the opened message so its progress log grows while the agent works.
@@ -38,6 +46,7 @@ export function TopicPage({ topicId, sub, live }: { topicId: string; sub: string
   if (!p) return <div className="empty-state"><span className="spinner" /> loading topic…</div>;
 
   const ref = { id: p.id, name: p.name };
+  const canDelete = spaces.some((s) => s.id === p.space_id && s.my_role === "admin");
   const all = tasks.data ?? [];
   const queue = all.filter((t) => t.status === "PENDING").sort(consumeOrder);
   const inflight = all.filter((t) => t.status === "RUNNING" || t.status === "CLAIMED");
@@ -62,6 +71,17 @@ export function TopicPage({ topicId, sub, live }: { topicId: string; sub: string
     try { await api.pauseSubscription(agentId, topicId, paused); refetch(); }
     catch (e) { alert(e instanceof Error ? e.message : String(e)); } finally { setBusy(null); }
   }
+  async function doDelete() {
+    setBusy("__delete__");
+    try {
+      await api.deleteProject(topicId);
+      await refreshSpaces();       // topic_count changed for the space
+      navigate("/topics");         // the topic no longer exists — leave the page
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+      setBusy(null);
+    }
+  }
 
   return (
     <div className="stack">
@@ -70,6 +90,7 @@ export function TopicPage({ topicId, sub, live }: { topicId: string; sub: string
         <Tags tags={p.tags} />
         <span className="muted mono" style={{ fontSize: 12 }}>{p.description}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {canDelete && <button className="btn sm ghost danger" onClick={() => setConfirmDel(true)}>Delete topic</button>}
           <button className="btn sm" onClick={() => openSchedule(ref)}>+ Schedule</button>
           <button className="btn sm primary" onClick={() => openRegister(ref)}>+ Register consumer</button>
         </div>
@@ -202,6 +223,25 @@ export function TopicPage({ topicId, sub, live }: { topicId: string; sub: string
         <Drawer title={msgDetail.data.type} tag={`#${shortId(msgDetail.data.id)}`} onClose={() => setOpenMsg(null)}>
           <MessageDetail task={msgDetail.data} />
         </Drawer>
+      )}
+
+      {confirmDel && (
+        <Modal title="Delete topic" tag={p.name} onClose={() => (busy === "__delete__" ? undefined : setConfirmDel(false))}>
+          <div className="muted" style={{ fontSize: 13, marginBottom: 16, lineHeight: 1.55 }}>
+            Permanently delete <b style={{ color: "var(--txt-0)" }}>{p.name}</b> and everything under it. This cannot be undone.
+            <ul style={{ margin: "10px 0 0", paddingLeft: 18 }}>
+              <li>{pl(p.pending + p.running + p.completed + p.dead, "message")} — queue, in-flight, history and dead-letter</li>
+              <li>{pl(p.schedules.length, "schedule")}</li>
+              <li>unsubscribes {pl(p.agents.length, "consumer")}</li>
+            </ul>
+          </div>
+          <div className="rowflex" style={{ gap: 8, justifyContent: "flex-end" }}>
+            <button className="btn sm" onClick={() => setConfirmDel(false)} disabled={busy === "__delete__"}>Cancel</button>
+            <button className="btn sm danger" onClick={doDelete} disabled={busy === "__delete__"}>
+              {busy === "__delete__" ? "Deleting…" : "Delete topic"}
+            </button>
+          </div>
+        </Modal>
       )}
 
       {reassign && (
